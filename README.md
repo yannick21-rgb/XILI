@@ -84,7 +84,9 @@ os/
     ├── ARCHITECTURE.md     # décisions structurantes
     ├── ROADMAP.md          # jalons J0 → J10
     ├── ABI.md              # contrat d'appels système
-    └── AI-WORKFLOW.md      # méthode de travail IA + humain
+    ├── DESIGN.md           # identité visuelle et langage (proposition)
+    ├── AI-WORKFLOW.md      # méthode de travail IA + humain
+    └── JOURNAL.md          # une entrée par itération
 ```
 
 ---

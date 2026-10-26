@@ -166,14 +166,16 @@ L'IA ne peut pas tester sur un PC physique. Protocole :
 
 ## 11. Prochaine itération
 
-**J2.1 — Chargeur UEFI**
+**J2.2 — Memory map**
 
 ```
-Objectif : booter via UEFI (OVMF) au lieu de GRUB/BIOS
-Contrainte : garder le boot BIOS en fallback
-Test : make test passe en mode UEFI
-Fichiers : boot/, kernel/src/boot/, Makefile
+Objectif : lire et afficher la carte mémoire (UEFI ou E820)
+Contrainte : ne pas allouer avant que l'allocateur physique existe
+Test : le noyau affiche la RAM totale et utilisable au boot
+Fichiers : kernel/src/mm/, kernel/src/main.rs
 ```
 
-Puis J2.2 (memory map), J2.3 (paging higher-half), J2.4 (allocateurs),
-J2.5 (IDT/exceptions), J2.6 (APIC/timer).
+J2.1 (boot UEFI) est terminé : ISO hybride + ESP disque, `make test-uefi`.
+
+Puis J2.3 (paging higher-half), J2.4 (allocateurs), J2.5 (IDT/exceptions),
+J2.6 (APIC/timer).

@@ -37,6 +37,25 @@ décisions prises.
   prochain jalon — GRUB UEFI ne sert qu'à prouver le démarrage UEFI.
 - Reste : memory map UEFI/E820, paging higher-half, IDT/exceptions.
 
+## 2026-10-26 — J2.2 : carte mémoire lue depuis la MBI
+
+- `kernel/src/mbi.rs` : structures Multiboot2 (en-tête, tags 1 et 6, entrées
+  de carte) et itérateur de tags.
+- `kernel/src/mm/mod.rs` : balayage de la carte, synthèse par type, détail
+  région par région.
+- Affichage au boot : synthèse (régions disponibles/réservées, RAM totale)
+  puis le détail complet.
+- Vérifié : `make test` (BIOS, 7 régions) et `make test-uefi` (ISO + ESP,
+  21 régions sous UEFI — GRUB y expose ACPI NVS et reclaimable).
+- Piège trouvé : **GRUB 2.12 émet un tag MEMORY_INFO (type 1) de 9 octets**
+  au lieu des 16 de la spécification. Lire `mem_lower`/`mem_upper` à
+  `off + 8`/`off + 12` renvoyait du remplissage (des centaines de Mio de
+  « RAM sous 1 Mio »). `MemInfo::read` n'accepte plus que la taille exacte
+  et signale l'absence plutôt que d'afficher des zéros trompeurs.
+- Le tag 6 (carte mémoire) est la source réellement exploitée ; il est
+  conforme et suffisant.
+- Reste : paging higher-half, allocateur physique, IDT/exceptions.
+
 ---
 
 ## Modèle d'entrée

@@ -73,9 +73,10 @@ J1: noyau charge, mode long actif, console OK.
 **Livrables**
 1. ~~Chargeur **UEFI** (Limine ou maison) remplaçant GRUB ; récupération de
    la memory map et du framebuffer.~~ **Partiel** : GRUB UEFI boote (ISO + ESP)
-   et le critère d'acceptation UEFI est atteint. La memory map n'est pas
-   encore lue, et le chargeur n'est pas encore Limine/maison.
-2. Parseur de memory map (UEFI ou E820).
+   et le critère d'acceptation UEFI est atteint. La memory map est lue
+   (voir livrable 2) ; le chargeur n'est pas encore Limine/maison.
+2. ~~Parseur de memory map (UEFI ou E820).~~ **Fait** : lecture de la MBI
+   Multiboot2, tags 1 et 6, affichage de la synthèse et du détail.
 3. Paging noyau : 4 niveaux, 4 Kio + 2 Mio, higher-half.
 4. Allocateur physique bitmap (puis buddy).
 5. Allocateur noyau slab (`kmalloc`/`kfree`).

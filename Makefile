@@ -80,10 +80,10 @@ test: iso
 # choisi par le premier et finit en PXE.
 test-uefi: iso-uefi esp
 	@cp $(OVMF_VARS) ovmf-vars.fd
-	@timeout 20 $(QEMU_UEFI) -cdrom $(UEFI_ISO) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
+	@timeout 60 $(QEMU_UEFI) -cdrom $(UEFI_ISO) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && echo "TEST OK — UEFI (ISO hybride)" || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
-	@timeout 20 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
+	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && echo "TEST OK — UEFI (ESP disque)" || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:

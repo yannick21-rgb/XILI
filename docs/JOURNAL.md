@@ -24,6 +24,19 @@ décisions prises.
   (`#UD` sur `movaps`).
 - Reste : memory map, IDT/exceptions, APIC/timer, UEFI.
 
+## 2026-10-26 — J2.1 : boot UEFI sous OVMF
+
+- Deux chemins UEFI prouvés, le noyau atteint J1 dans les deux : ISO hybride
+  (`grub-mkrescue`) et ESP disque (`tools/mk-esp.sh`).
+- `make test-uefi` boote les deux sous OVMF et exige le marqueur J1.
+- Trois pièges documentés dans `tools/mk-esp.sh` : `mformat` écrase le MBR
+  quand il est lancé sur le disque entier ; `grub-mkstandalone` a besoin de
+  `--modules=part_msdos` pour parser la table de partitions ; la config GRUB
+  doit être passée en chemin relatif pour être embarquée au bon endroit.
+- Décision : GRUB reste le chargeur temporaire. Limine ou chargeur maison au
+  prochain jalon — GRUB UEFI ne sert qu'à prouver le démarrage UEFI.
+- Reste : memory map UEFI/E820, paging higher-half, IDT/exceptions.
+
 ---
 
 ## Modèle d'entrée

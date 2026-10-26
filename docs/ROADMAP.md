@@ -13,7 +13,7 @@ Légende : ✅ fait · 🔄 en cours · ⬜ à faire
 |---|---|---|---|
 | J0 | Cadrage, outillage, CI | 2–3 semaines | ✅ |
 | J1 | Boot + console | 1–2 mois | ✅ |
-| J2 | Mémoire | 2–4 mois | ⬜ |
+| J2 | Mémoire | 2–4 mois | 🔄 |
 | J3 | Processus + shell | 3–6 mois | ⬜ |
 | J4 | Alpine (userland complet) | 4–8 mois | ⬜ |
 | J5 | Réseau | 2–4 mois | ⬜ |
@@ -66,13 +66,15 @@ J1: noyau charge, mode long actif, console OK.
 
 ---
 
-## J2 — Mémoire ⬜
+## J2 — Mémoire 🔄
 
 **Objectif** : gérer la RAM physique et virtuelle de façon fiable.
 
 **Livrables**
-1. Chargeur **UEFI** (Limine ou maison) remplaçant GRUB ; récupération de
-   la memory map et du framebuffer.
+1. ~~Chargeur **UEFI** (Limine ou maison) remplaçant GRUB ; récupération de
+   la memory map et du framebuffer.~~ **Partiel** : GRUB UEFI boote (ISO + ESP)
+   et le critère d'acceptation UEFI est atteint. La memory map n'est pas
+   encore lue, et le chargeur n'est pas encore Limine/maison.
 2. Parseur de memory map (UEFI ou E820).
 3. Paging noyau : 4 niveaux, 4 Kio + 2 Mio, higher-half.
 4. Allocateur physique bitmap (puis buddy).

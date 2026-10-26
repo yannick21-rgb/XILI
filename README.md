@@ -13,6 +13,10 @@ l'écosystème existant (musl, Alpine, Wayland, Mesa, Wine).
 initialise une console (série + VGA texte) et affiche les informations
 multiboot2.
 
+**J2.1 atteint** : le noyau boote aussi en **UEFI**, sous le firmware
+OVMF, sans BIOS — par ISO hybride et par ESP disque. C'est le critère
+d'acceptation UEFI du jalon J2 ; le chargeur reste GRUB.
+
 ```
 XILI - noyau x86-64 (Rust)
 --------------------------------------
@@ -43,10 +47,15 @@ entièrement `no_std` et n'utilise que `core`.
 
 ```bash
 make build        # compile le noyau
-make iso          # construit xili.iso
+make iso          # construit xili.iso (BIOS)
+make iso-uefi     # construit xili-uefi.iso (UEFI, ISO hybride)
+make esp          # construit xili-esp.img (UEFI, vraie ESP)
 make run          # boote dans QEMU avec affichage + série
 make run-headless # boote sans affichage (série dans le terminal)
-make test         # test de non-régression : vérifie que J1 est atteint
+make run-uefi     # boote l'ISO UEFI sous OVMF
+make run-esp      # boote l'ESP sous OVMF
+make test         # BIOS : vérifie que le noyau atteint J1
+make test-uefi     # UEFI : les deux chemins sous OVMF
 make clean
 ```
 
@@ -59,7 +68,9 @@ os/
 ├── Cargo.toml              # workspace
 ├── Makefile                # build, ISO, QEMU, test
 ├── .cargo/config.toml      # cible de compilation
-├── boot/grub.cfg           # configuration GRUB
+├── boot/grub.cfg           # configuration GRUB (BIOS)
+├── boot/grub-uefi.cfg      # configuration GRUB (UEFI)
+├── tools/mk-esp.sh         # construit une ESP UEFI bootable
 ├── kernel/
 │   ├── Cargo.toml
 │   ├── linker.ld           # layout mémoire du noyau
@@ -81,14 +92,16 @@ os/
 ## Chaîne de boot actuelle
 
 ```
-UEFI/BIOS → GRUB (multiboot2) → boot.s (32 bits)
+BIOS   → GRUB depuis le MBR (multiboot2) → boot.s (32 bits)
+UEFI   → GRUB depuis l'ESP (multiboot2)   → boot.s (32 bits)
           → tables de pages 1 Gio identity-mappées
           → PAE + LME + PG → mode long 64 bits
           → SSE activé → kernel_main(magic, mbi)
 ```
 
 GRUB est utilisé **temporairement**. La cible est un chargeur UEFI
-(Limine ou chargeur maison) au jalon J2.
+(Limine ou chargeur maison) au jalon J2 — GRUB UEFI ne sert ici qu'à
+prouver que le noyau démarre sous un firmware UEFI.
 
 ---
 
@@ -106,4 +119,5 @@ GRUB est utilisé **temporairement**. La cible est un chargeur UEFI
 
 ## Prochaine étape
 
-**J2 — mémoire et processus** : voir `docs/ROADMAP.md`.
+**J2 — mémoire** : parseur de memory map (UEFI/E820), paging higher-half,
+allocateur physique, IDT/exceptions. Voir `docs/ROADMAP.md`.

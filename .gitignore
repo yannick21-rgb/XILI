@@ -1,3 +1,6 @@
 /target
 /iso
+/iso-uefi
 *.iso
+*.img
+/ovmf-vars.fd

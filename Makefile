@@ -1,7 +1,13 @@
-TARGET  := x86_64-unknown-linux-gnu
-KERNEL  := target/$(TARGET)/release/kernel
-ISO     := xili.iso
-LOG     := /tmp/xili-serial.log
+TARGET   := x86_64-unknown-linux-gnu
+KERNEL   := target/$(TARGET)/release/kernel
+ISO      := xili.iso
+UEFI_ISO := xili-uefi.iso
+ESP_IMG  := xili-esp.img
+LOG      := /tmp/xili-serial.log
+UEFI_LOG := /tmp/xili-uefi-serial.log
+
+OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd
 
 # Le noyau est un binaire freestanding : pas de crt, pas de libc,
 # pas de PIE, et un script de link dédié.
@@ -13,13 +19,20 @@ RUSTFLAGS := -C no-redzone=yes \
              -C link-arg=-Wl,--build-id=none \
              -C link-arg=-T$(CURDIR)/kernel/linker.ld
 
-.PHONY: all build iso run run-headless test clean
+# QEMU avec le firmware UEFI (OVMF) : le BIOS est remplacé par OVMF.
+# ovmf-vars.fd est une copie modifiable du VARS fourni en lecture seule.
+QEMU_UEFI := qemu-system-x86_64 -machine q35 \
+             -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
+             -drive if=pflash,format=raw,unit=1,file=$(CURDIR)/ovmf-vars.fd
+
+.PHONY: all build iso iso-uefi esp run run-headless run-uefi run-esp test test-uefi clean
 
 all: iso
 
 build:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo build --release
 
+# BIOS : GRUB chargé depuis le MBR de l'ISO.
 iso: build
 	rm -rf iso
 	mkdir -p iso/boot/grub
@@ -27,17 +40,52 @@ iso: build
 	cp boot/grub.cfg iso/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO) iso
 
+# UEFI : même noyau, GRUB lancé par le firmware. L'entrée El Torito EFI de
+# l'ISO pointe vers une petite image FAT que grub-mkrescue sait construire.
+iso-uefi: build
+	rm -rf iso-uefi
+	mkdir -p iso-uefi/boot/grub
+	cp $(KERNEL) iso-uefi/boot/kernel
+	cp boot/grub-uefi.cfg iso-uefi/boot/grub/grub.cfg
+	grub-mkrescue -o $(UEFI_ISO) iso-uefi
+
+# UEFI sur disque : une vraie ESP (partition FAT32 type 0xEF).
+esp: build
+	tools/mk-esp.sh $(ESP_IMG)
+
 run: iso
 	qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio
 
 run-headless: iso
 	qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot
 
+run-uefi: iso-uefi
+	@cp $(OVMF_VARS) ovmf-vars.fd
+	$(QEMU_UEFI) -cdrom $(UEFI_ISO) -m 512M -nographic -no-reboot
+
+run-esp: esp
+	@cp $(OVMF_VARS) ovmf-vars.fd
+	$(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot
+
 # Test de non-régression : le noyau doit booter et atteindre le marqueur J1.
 test: iso
 	@timeout 10 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
-	@grep -q "J1: noyau charge" $(LOG) && echo "TEST OK — le noyau boote et atteint J1" || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
+	@grep -q "J1: noyau charge" $(LOG) && echo "TEST OK — BIOS" || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
+
+# Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
+# chemins (ISO hybride et ESP disque).
+#
+# OVMF persiste son BootOrder dans le VARS : il faut donc des variables
+# fraîches avant CHAQUE boot, sinon le second démarre sur le périphérique
+# choisi par le premier et finit en PXE.
+test-uefi: iso-uefi esp
+	@cp $(OVMF_VARS) ovmf-vars.fd
+	@timeout 20 $(QEMU_UEFI) -cdrom $(UEFI_ISO) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
+	@grep -q "J1: noyau charge" $(UEFI_LOG) && echo "TEST OK — UEFI (ISO hybride)" || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
+	@cp $(OVMF_VARS) ovmf-vars.fd
+	@timeout 20 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
+	@grep -q "J1: noyau charge" $(UEFI_LOG) && echo "TEST OK — UEFI (ESP disque)" || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:
 	cargo clean
-	rm -rf iso $(ISO)
+	rm -rf iso iso-uefi $(ISO) $(UEFI_ISO) $(ESP_IMG) ovmf-vars.fd

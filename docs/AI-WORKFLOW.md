@@ -166,16 +166,17 @@ L'IA ne peut pas tester sur un PC physique. Protocole :
 
 ## 11. Prochaine itération
 
-**J2.2 — Memory map**
+**J2.3 — Paging higher-half**
 
 ```
-Objectif : lire et afficher la carte mémoire (UEFI ou E820)
-Contrainte : ne pas allouer avant que l'allocateur physique existe
-Test : le noyau affiche la RAM totale et utilisable au boot
-Fichiers : kernel/src/mm/, kernel/src/main.rs
+Objectif : tables de pages 4 niveaux, higher-half, garder l'identity map
+Contrainte : 4 Kio et 2 Mio ; ne pas casser l'identité avant le basculement
+Test : cartouche identity + higher-half affichés, aucune faute de page
+Fichiers : kernel/src/mm/paging.rs, kernel/src/mm/mod.rs
 ```
 
-J2.1 (boot UEFI) est terminé : ISO hybride + ESP disque, `make test-uefi`.
+J2.2 (carte mémoire) est terminé : MBI Multiboot2, `kernel/src/mm/`,
+`make test` et `make test-uefi` passent.
+Piège à retenir : GRUB 2.12 émet un tag MEMORY_INFO de 9 octets, pas 16.
 
-Puis J2.3 (paging higher-half), J2.4 (allocateurs), J2.5 (IDT/exceptions),
-J2.6 (APIC/timer).
+Puis J2.4 (allocateurs), J2.5 (IDT/exceptions), J2.6 (APIC/timer).

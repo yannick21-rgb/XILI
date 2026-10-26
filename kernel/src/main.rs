@@ -7,6 +7,7 @@ use core::panic::PanicInfo;
 mod console;
 mod mbi;
 mod mm;
+mod runtime;
 mod serial;
 mod vga;
 
@@ -17,6 +18,12 @@ const MULTIBOOT2_BOOTLOADER_MAGIC: u32 = 0x36d7_6289;
 /// Marqueur du jalon J1. `make test` et `make test-uefi` le cherchent dans
 /// le journal série : ne pas le renommer sans mettre les cibles à jour.
 const J1_MARKER: &str = "J1: noyau charge, mode long actif, console OK.";
+
+/// Marqueur du jalon J2.3 : les tables de pages 4 niveaux sont actives.
+///
+/// C'est lui qui prouve que la bascule de CR3 a réussi : un descripteur
+/// fautif fait triple-fauter le noyau avant qu'il ne l'imprime.
+const J23_MARKER: &str = "J2.3: tables de pages 4 niveaux, identity + higher-half.";
 
 #[no_mangle]
 pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
@@ -69,6 +76,27 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
 
     unsafe { mm::report_all(mbi) };
+    // --------------------------------------------------------------------
+
+    // --- J2.3 : tables de pages 4 niveaux --------------------------------
+    //
+    // On construit les tables en Rust et on les active. L'identity map
+    // est conservé : le noyau n'est pas encore relié en higher-half, son
+    // code et sa pile vivent à 1 Mio et doivent rester accessibles.
+    //
+    // Si les tables sont fautes, la bascule de CR3 triple-faulte — QEMU
+    // redémarre et le marqueur J2.3 n'apparait pas.
+
+    let tables = mm::paging::build();
+    mm::paging::report(&tables);
+    unsafe { mm::paging::load(tables.pml4()) };
+
+    console::print(format_args!(
+        "\nCR3 charge : {:#018x}\n",
+        tables.pml4()
+    ));
+    mm::paging::verify();
+    console::print(format_args!("{}\n", J23_MARKER));
     // --------------------------------------------------------------------
 
     console::print(format_args!("\n{}\n", J1_MARKER));

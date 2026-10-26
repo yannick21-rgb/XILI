@@ -166,17 +166,23 @@ L'IA ne peut pas tester sur un PC physique. Protocole :
 
 ## 11. Prochaine itération
 
-**J2.3 — Paging higher-half**
+**J2.3b — Noyau relié en higher-half**
 
 ```
-Objectif : tables de pages 4 niveaux, higher-half, garder l'identity map
-Contrainte : 4 Kio et 2 Mio ; ne pas casser l'identité avant le basculement
-Test : cartouche identity + higher-half affichés, aucune faute de page
-Fichiers : kernel/src/mm/paging.rs, kernel/src/mm/mod.rs
+Objectif : linker le noyau à 0xFFFFFFFF80000000, sauter en higher-half,
+           puis supprimer l'identity map
+Contrainte : garder l'identity map jusqu'au saut ; le point d'entrée ELF
+             doit rester bas (GRUB saute à l'adresse du fichier)
+Test : le noyau affiche son adresse de lien et son adresse d'exécution,
+       qui doivent différer ; plus aucune faute de page
+Fichiers : kernel/linker.ld, kernel/src/boot.s, kernel/src/mm/paging.rs
 ```
 
-J2.2 (carte mémoire) est terminé : MBI Multiboot2, `kernel/src/mm/`,
-`make test` et `make test-uefi` passent.
-Piège à retenir : GRUB 2.12 émet un tag MEMORY_INFO de 9 octets, pas 16.
+J2.3 (tables 4 niveaux) est terminé : `kernel/src/mm/paging.rs`, CR3 chargé,
+page 4 Kio prouvée par écriture/lecture croisée. `make test` et
+`make test-uefi` passent.
+Trois pièges à retenir : les indices de table se calculent depuis l'adresse
+(jamais écrits en dur), et EFER.NXE est requis pour que le bit NX d'un
+descripteur ne soit pas un bit réservé.
 
 Puis J2.4 (allocateurs), J2.5 (IDT/exceptions), J2.6 (APIC/timer).

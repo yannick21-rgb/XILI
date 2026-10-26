@@ -77,7 +77,10 @@ J1: noyau charge, mode long actif, console OK.
    (voir livrable 2) ; le chargeur n'est pas encore Limine/maison.
 2. ~~Parseur de memory map (UEFI ou E820).~~ **Fait** : lecture de la MBI
    Multiboot2, tags 1 et 6, affichage de la synthèse et du détail.
-3. Paging noyau : 4 niveaux, 4 Kio + 2 Mio, higher-half.
+3. ~~Paging noyau : 4 niveaux, 4 Kio + 2 Mio, higher-half.~~ **Partiel** :
+   tables 4 niveaux construites en Rust, identity + higher-half en pages de
+   2 Mio, une page de 4 Kio, CR3 chargé et vérifié. **Le noyau n'est pas
+   encore relié en higher-half** — il tourne à 1 Mio.
 4. Allocateur physique bitmap (puis buddy).
 5. Allocateur noyau slab (`kmalloc`/`kfree`).
 6. `mmap`/`munmap`/`mprotect` côté noyau (sans userland).

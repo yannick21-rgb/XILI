@@ -98,10 +98,10 @@ _start:
     or $0x20, %eax
     mov %eax, %cr4
 
-    /* --- activer LME (IA32_EFER bit 8) --- */
+    /* --- activer LME (IA32_EFER bit 8) et NXE (bit 11) --- */
     mov $0xC0000080, %ecx
     rdmsr
-    or $0x100, %eax
+    or $0x900, %eax             /* LME | NXE */
     wrmsr
 
     /* --- activer paging --- */

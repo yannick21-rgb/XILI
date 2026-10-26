@@ -67,10 +67,16 @@ run-esp: esp
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	$(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot
 
-# Test de non-régression : le noyau doit booter et atteindre le marqueur J1.
+# Test de non-régression : le noyau doit booter et atteindre les marqueurs
+# J1 (console) et J2.3 (tables de pages actives).
+#
+# J2.3 est le critère du paging : un descripteur fautif fait triple-fauter
+# le noyau au chargement de CR3, avant qu'il n'imprime le marqueur.
 test: iso
-	@timeout 10 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
-	@grep -q "J1: noyau charge" $(LOG) && echo "TEST OK — BIOS" || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
+	@timeout 20 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
+	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
+	  && echo "TEST OK — BIOS (J1 + J2.3)" \
+	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
 # chemins (ISO hybride et ESP disque).
@@ -81,10 +87,14 @@ test: iso
 test-uefi: iso-uefi esp
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -cdrom $(UEFI_ISO) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
-	@grep -q "J1: noyau charge" $(UEFI_LOG) && echo "TEST OK — UEFI (ISO hybride)" || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
+	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
+	  && echo "TEST OK — UEFI (ISO hybride)" \
+	  || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
-	@grep -q "J1: noyau charge" $(UEFI_LOG) && echo "TEST OK — UEFI (ESP disque)" || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
+	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
+	  && echo "TEST OK — UEFI (ESP disque)" \
+	  || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:
 	cargo clean

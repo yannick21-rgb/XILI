@@ -56,6 +56,37 @@ décisions prises.
   conforme et suffisant.
 - Reste : paging higher-half, allocateur physique, IDT/exceptions.
 
+## 2026-10-26 — J2.3 : tables de pages 4 niveaux, identity + higher-half
+
+- `kernel/src/mm/paging.rs` : descripteurs, tables, construction des tables
+  en Rust, résolution d'adresse, chargement de CR3, vérification.
+- `kernel/src/runtime.rs` : `memset`/`memcpy`/`memmove`/`memcmp`, absents
+  d'un binaire `no_std` mais exigés par rustc dès qu'un tableau est
+  initialisé — le noyau compilait mais ne se liait pas.
+- `kernel/src/boot.s` : EFER reçoit **NXE** (bit 11) en plus de LME.
+- Tables couvertes : identity `0..1 Gio` et higher-half
+  `0xFFFFFFFF80000000..+1 Gio`, en pages de 2 Mio ; plus une page de 4 Kio
+  dans un slot de PML4 libre.
+- Vérifié : `make test` et `make test-uefi` passent. L'activation est
+  prouvée par écriture par l'adresse virtuelle de test et relecture par
+  l'adresse physique — même valeur `0x123456789abcdef0` par les deux
+  voies, ce qui prouve que le parcours 4 niveaux résout bien la page.
+- Trois pièges trouvés, tous les trois invisibles dans le code correct :
+  1. `pml4_index(0x80000000)` = **0** : la page de test écrasait
+     l'identity map. Il faut une adresse dont l'index de PML4 est libre
+     (ici `0x8000000000`, index 1).
+  2. `pdpt_index(0xFFFFFFFF80000000)` = **511**, pas 0 : les bits 38..30
+     du higher-half sont tous à 1. Écrire l'index 0 en dur laissait le
+     higher-half dans le vide. Les indices se calculent depuis l'adresse,
+     jamais en dur.
+  3. **EFER.NXE sans lequel le bit 63 d'un descripteur est réservé** :
+     poser le bit NX déclenchait une faute « reserved bit violation »
+     (code d'erreur `0x0a` : absent, écriture, RSV) au premier accès.
+- Le bit Global n'est posé que sur les pages mappées ; sur un descripteur
+  de table, les bits 8 à 11 sont réservés.
+- Reste : relier le noyau en higher-half (il tourne encore à 1 Mio),
+  allocateur physique, IDT/exceptions.
+
 ---
 
 ## Modèle d'entrée

@@ -12,6 +12,8 @@ use crate::console;
 use crate::mbi::{self, region, tag};
 use core::mem::size_of;
 
+pub mod paging;
+
 /// Index des tranches dans [`MemMap::summary`].
 pub const IDX_AVAILABLE: usize = 0;
 pub const IDX_RESERVED: usize = 1;

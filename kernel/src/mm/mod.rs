@@ -13,6 +13,7 @@ use crate::mbi::{self, region, tag};
 use core::mem::size_of;
 
 pub mod paging;
+pub mod phys;
 
 /// Index des tranches dans [`MemMap::summary`].
 pub const IDX_AVAILABLE: usize = 0;

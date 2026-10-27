@@ -256,16 +256,17 @@ static mut SCRATCH_PAGE: Page = Page::zeroed();
 /* ------------------------------------------------------------
  * Adresses physiques
  *
- * Le noyau n'est pas encore relié en higher-half : il tourne à
- * l'adresse où GRUB l'a chargé, et l'identity map rend adresse
- * virtuelle et adresse physique égales. `addr_of!` donne donc
- * l'adresse physique directement — c'est ce qui permet d'écrire
- * les descripteurs sans conversion.
+ * Le noyau est lié en higher-half : `addr_of!` renvoie une adresse
+ * virtuelle en higher-half. Les descripteurs de table conservent
+ * l'adresse PHYSIQUE (exigée par le matériel), d'où la soustraction
+ * de HIGHER_HALF. L'identity map (0..1 Gio) mappant les mêmes pages
+ * physiques rend ces adresses physiques accessibles en lecture et
+ * écriture.
  * ------------------------------------------------------------ */
 
 /// Adresse physique d'une table statique.
 unsafe fn phys<T>(table: *const T) -> u64 {
-    table as u64
+    table as u64 - HIGHER_HALF
 }
 
 /// Index de niveau 4 d'une adresse virtuelle.

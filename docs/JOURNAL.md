@@ -87,6 +87,28 @@ décisions prises.
 - Reste : relier le noyau en higher-half (il tourne encore à 1 Mio),
   allocateur physique, IDT/exceptions.
 
+## 2026-10-27 — J2.3b : noyau lié et exécuté en higher-half
+- `boot.s` : saut en higher-half par `movabs` + `call *%rax` — un `call rel32`
+  ne peut pas atteindre le higher-half (> 4 GiB). AT&T corrigé : `jmp *%rax`.
+- `linker.ld` : `AT(. - HIGHER_HALF)` donne des LMA physiques basses (< 4 GiB)
+  pour GRUB ; `KEEP()` empêche `--gc-sections` de pétrir le header multiboot2.
+- `main.rs` : preuve d'exécution — LINK_GUARD a une adresse de lien >= HIGHER_HALF,
+  lue volatil par l'adresse virtuelle (sinon #PF avant l'impression).
+- Vérifié : `make test` (BIOS) et `make test-uefi` (ISO + ESP) — `OK (lien=…,
+  phys=…)` avec phys = lien - HIGHER_HALF. Piège : `code-model=kernel` (pas
+  `relocation-model=large`, qui n'existe pas) → R_X86_64_64 vs R_X86_64_32.
+
+## 2026-10-27 — J2.4 : allocateur physique bitmap
+- `kernel/src/mm/phys.rs` : bitmap 1 bit/page (4 Kio), plafond 4 GiB. `init`
+  scanne la carte MBI, libère les régions AVAILABLE, réserve noyau + MBI.
+- API : `alloc_page`/`free_page` sûres (unsafe contenu dans le module), recherche
+  circulaire amortie via `NEXT_WORD` + `(!mot).trailing_zeros()`.
+- Test : alloue 100 Mio (25600 pages) sur un réservoir de 256 entrées, libère,
+  vérifie le compte libre revient exactement (ex. 130728 -> 130728 pages).
+- Vérifié : `make test` + `make test-uefi` passent, gate J2.4 ajouté.
+- Bug : `bits[w].trailing_zeros()` trouve le plus bas bit UTILISÉ — il faut
+  inverser (`!bits[w]`) pour obtenir le plus bas bit LIBRE.
+
 ---
 
 ## Modèle d'entrée

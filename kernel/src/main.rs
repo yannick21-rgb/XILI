@@ -25,6 +25,10 @@ const J1_MARKER: &str = "J1: noyau charge, mode long actif, console OK.";
 /// fautif fait triple-fauter le noyau avant qu'il ne l'imprime.
 const J23_MARKER: &str = "J2.3: tables de pages 4 niveaux, identity + higher-half.";
 
+/// Statique ancré en higher-half : son adresse de lien sert de preuve
+/// que le noyau s'exécute au-delà de HIGHER_HALF (voir J2.3b dans main).
+static LINK_GUARD: u64 = 0x5AA5_5AA5_5AA5_5AA5;
+
 #[no_mangle]
 pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     serial::init();
@@ -96,7 +100,53 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         tables.pml4()
     ));
     mm::paging::verify();
+
+    // --- preuve d'exécution en higher-half (J2.3b) ---------------------
+    // Le noyau est lié en higher-half : l'adresse de lien d'un symbole
+    // (LINK_GUARD) est >= HIGHER_HALF. Son adresse physique de chargement
+    // vaut lien - HIGHER_HALF (bas, ~1 Mio). Afficher les deux et les
+    // comparer prouve le lien ; lire la valeur par l'adresse virtuelle
+    // prouve que le mapping higher-half est actif (sinon #PF = kernel
+    // mort avant l'impression) et que le code qui lit (ci-même, lié en
+    // higher-half) s'exécute là.
+    let link_addr = core::ptr::addr_of!(LINK_GUARD) as u64;
+    let phys_addr = link_addr - mm::paging::HIGHER_HALF;
+    let guard_val =
+        unsafe { core::ptr::read_volatile(core::ptr::addr_of!(LINK_GUARD)) };
+    let in_higher_half =
+        link_addr >= mm::paging::HIGHER_HALF && phys_addr != link_addr
+            && guard_val == LINK_GUARD;
+    console::print(format_args!(
+        "higher-half : {} (lien={:#018x}, phys={:#018x})\n",
+        if in_higher_half { "OK" } else { "ECHEC" }, link_addr, phys_addr
+    ));
+    // -------------------------------------------------------------------
     console::print(format_args!("{}\n", J23_MARKER));
+
+    // --- J2.4 : allocateur physique bitmap --------------------------------
+    //
+    // Le bitmap est construit à partir de la carte Multiboot2, puis testé
+    // en boucle : 100 Mio de pages sont allouées puis libérées ; le compteur
+    // de pages libres doit revenir exactement à la valeur initiale.
+    //
+    // L'allocateur n'est pas appelé depuis les IRQ (AI-WORKFLOW §6) : il
+    // n'y a pas encore d'interruptions, et l'allocation reste sédentaire.
+    unsafe { mm::phys::init(mbi) };
+    let free0 = mm::phys::free_pages();
+    let used0 = mm::phys::used_pages();
+    console::print(format_args!(
+        "allocateur physique : bitmap (page 4 Kio, {} libres / {} totales)\n",
+        free0, mm::phys::total_pages()
+    ));
+    let phys_ok = unsafe { mm::phys::test() };
+    console::print(format_args!(
+        "J2.4: allocateur physique bitmap - {} (libre {} -> {} pages)\n",
+        if phys_ok { "OK" } else { "ECHEC" },
+        free0, mm::phys::free_pages()
+    ));
+    console::print(format_args!(
+        "  reserve : {} pages (noyau + MBI + bitmap)\n", used0
+    ));
     // --------------------------------------------------------------------
 
     console::print(format_args!("\n{}\n", J1_MARKER));

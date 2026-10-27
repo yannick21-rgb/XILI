@@ -11,8 +11,13 @@ OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd
 
 # Le noyau est un binaire freestanding : pas de crt, pas de libc,
 # pas de PIE, et un script de link dédié.
+# code-model=kernel : le noyau est lié en higher-half (> 4 GiB). Le modèle
+# `static` n'émet que des R_X86_64_32 qui débordent au-dessus de 4 GiB (pour
+# les casts `as u64` et les références format_args! → #PF). Le code-model
+# `kernel` émet des R_X86_64_64 / RIP-relatifs qui tiennent sur 64 bits.
 RUSTFLAGS := -C no-redzone=yes \
              -C relocation-model=static \
+             -C code-model=kernel \
              -C link-arg=-nostdlib \
              -C link-arg=-static \
              -C link-arg=-no-pie \
@@ -68,14 +73,20 @@ run-esp: esp
 	$(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot
 
 # Test de non-régression : le noyau doit booter et atteindre les marqueurs
-# J1 (console) et J2.3 (tables de pages actives).
+# J1 (console), J2.3 (tables de pages 4 niveaux), J2.3b (higher-half)
+# et J2.4 (allocateur physique bitmap).
 #
 # J2.3 est le critère du paging : un descripteur fautif fait triple-fauter
 # le noyau au chargement de CR3, avant qu'il n'imprime le marqueur.
+# J2.3b exige en plus que le noyau s'exécute en higher-half : l'adresse de
+# lien d'un symbole (LINK_GUARD) est > HIGHER_HALF, et la lecture de sa
+# valeur par l'adresse virtuelle réussit (sinon #PF avant l'impression).
 test: iso
 	@timeout 20 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3)" \
+	  && grep -q "higher-half : OK" $(LOG) \
+	  && grep -q "J2.4: allocateur physique bitmap - OK" $(LOG) \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
@@ -88,12 +99,16 @@ test-uefi: iso-uefi esp
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -cdrom $(UEFI_ISO) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI (ISO hybride)" \
+	  && grep -q "higher-half : OK" $(UEFI_LOG) \
+	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
+	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4)" \
 	  || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI (ESP disque)" \
+	  && grep -q "higher-half : OK" $(UEFI_LOG) \
+	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
+	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4)" \
 	  || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:

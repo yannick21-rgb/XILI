@@ -86,7 +86,13 @@ test: iso
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
 	  && grep -q "higher-half : OK" $(LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4)" \
+	  && grep -q "J2.5: IDT + exceptions" $(LOG) \
+	  && grep -q "J2.5b: test #PF" $(LOG) \
+	  && grep -q "vecteur 14 (#PF Page Fault)" $(LOG) \
+	  && grep -q "cr2" $(LOG) \
+	  && grep -q "J2.6: PIC remappe" $(LOG) \
+	  && grep -q "J2.6b: timer IRQ active" $(LOG) \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.6 + J2.6b)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux

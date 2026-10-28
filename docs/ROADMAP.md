@@ -84,7 +84,11 @@ J1: noyau charge, mode long actif, console OK.
 4. Allocateur physique bitmap (puis buddy).
 5. Allocateur noyau slab (`kmalloc`/`kfree`).
 6. `mmap`/`munmap`/`mprotect` côté noyau (sans userland).
-7. GDT/TSS par CPU, IDT, exceptions (`#PF`, `#GP`, `#DF`), panic handler propre.
+7. ~~GDT/TSS par CPU, IDT, exceptions (`#PF`, `#GP`, `#DF`), panic handler propre.~~ **Fait** :
+   GDT enrichie (code 0x08, données 0x10, TSS 0x18), TSS 64 bits avec
+   IST1 pour #DF, IDT 256 entrées avec handlers pour les 32 exceptions.
+   Le #PF sur `0xDEAD0000` est intercepté, affiche RIP/CR2/code d'erreur
+   et bloque proprement (hlt loop) au lieu de provoquer un triple fault.
 8. PIC → APIC, timer PIT/HPET, clavier PS/2.
 
 **Test d'acceptation**

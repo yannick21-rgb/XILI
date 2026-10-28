@@ -5,13 +5,19 @@ use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 
 mod console;
+mod idt;
+mod io;
+mod irq;
 mod mbi;
 mod mm;
+mod pic;
 mod runtime;
 mod serial;
+mod tss;
 mod vga;
 
 global_asm!(include_str!("boot.s"), options(att_syntax));
+global_asm!(include_str!("isr.s"), options(att_syntax));
 
 const MULTIBOOT2_BOOTLOADER_MAGIC: u32 = 0x36d7_6289;
 
@@ -123,6 +129,23 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     // -------------------------------------------------------------------
     console::print(format_args!("{}\n", J23_MARKER));
 
+    // --- J2.5 : IDT / exceptions ---------------------------------
+    //
+    // Le TSS (GDT enrichie) et l'IDT sont initialisés APRÈS le paging
+    // : le TSS pointe vers la pile courante (boot.s) et vers IST1
+    // (une pile BSS) pour le #DF. L'IDT active les handlers #DF/#GP/#PF.
+    //
+    // Une faute (page, protection, double) est désormais interceptée
+    // par le handler Rust au lieu de provoquer un triple fault.
+    let stack_top: u64;
+    unsafe { asm!("mov {0}, rsp", out(reg) stack_top) };
+    unsafe { tss::init(stack_top) };
+    unsafe { idt::init() };
+    console::print(format_args!(
+        "J2.5: IDT + exceptions (#DF IST1, #GP, #PF) initialisees.\n"
+    ));
+    // ------------------------------------------------------------
+
     // --- J2.4 : allocateur physique bitmap --------------------------------
     //
     // Le bitmap est construit à partir de la carte Multiboot2, puis testé
@@ -150,6 +173,56 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     // --------------------------------------------------------------------
 
     console::print(format_args!("\n{}\n", J1_MARKER));
+
+    // --- J2.6 : PIC + timer + clavier --------------------------
+    //
+    // Après l'IDT (J2.5), on remappe le PIC 8259 vers les vecteurs
+    // 32..47, Programme le PIT a 100 Hz, et active IRQ 0 (timer)
+    // et IRQ 1 (clavier). Le test verifie que le timer tick
+    // bien (compteur incremente) — preuve que le chemin IRQ →
+    // IDT → stub ASM → handle_irq → iretq est fonctionnel.
+    unsafe { irq::init() };
+    console::print(format_args!(
+        "J2.6: PIC remappe (IRQ 32-47), timer 100 Hz + clavier actifs.\n"
+    ));
+
+    // Activer les interruptions matérielles.
+    unsafe { asm!("sti") };
+
+    // --- J2.6b : test du timer ----------------------------------
+    //
+    // On attend ~30 ms (3 ticks a 100 Hz) pour verifier que le
+    // timer tick. On scrute le compteur dans une boucle hlt :
+    // chaque tick réveille le CPU, l'IRQ est traite, le compteur
+    // est incremente, puis on re-dort. Si le PIC/IDT/handler sont
+    // faut, le noyau triple-faulte ou reste bloque a 0 tick.
+    let ticks_start = irq::ticks();
+    console::print(format_args!("ts={}\n", ticks_start));
+    while irq::ticks() - ticks_start < 3 {
+        unsafe { asm!("hlt") }
+    }
+    let ticks_end = irq::ticks();
+    console::print(format_args!("te={}\n", ticks_end));
+    console::print(format_args!(
+        "J2.6b: timer IRQ active (ticks {} -> {})\n",
+        ticks_start, ticks_end
+    ));
+    // ----------------------------------------------------------
+
+    // --- J2.5b : test du #PF -------------------------------------
+    //
+    // Accès volontaire à une adresse non mappée (0xDEAD0000 :
+    // ni dans l'identity map 0..1 Gio, ni dans le higher-half).
+    // Le handler #PF doit intercepter la faute, imprimer le
+    // diagnostic (CR2, code d'erreur) et bloquer — PAS de triple
+    // fault. Le test passera si le log contient « #PF ».
+    console::print(format_args!(
+        "J2.5b: test #PF — acces a 0xDEAD0000 (page non mappee)...\n"
+    ));
+    unsafe {
+        core::ptr::write_volatile(0xDEAD_0000 as *mut u64, 0x1234_5678_9ABC_DEF0u64);
+    }
+    // ----------------------------------------------------------
     console::print(format_args!("Le systeme est en halt. Ctrl+Alt+Suppr pour quitter QEMU.\n"));
 
     loop {

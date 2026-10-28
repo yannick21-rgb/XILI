@@ -185,4 +185,4 @@ Trois pièges à retenir : les indices de table se calculent depuis l'adresse
 (jamais écrits en dur), et EFER.NXE est requis pour que le bit NX d'un
 descripteur ne soit pas un bit réservé.
 
-Puis J2.4 (allocateurs), J2.5 (IDT/exceptions), J2.6 (APIC/timer).
+Puis J2.4 (allocateurs) ✅, J2.5 (IDT/exceptions) ✅, J2.6 (APIC/timer).

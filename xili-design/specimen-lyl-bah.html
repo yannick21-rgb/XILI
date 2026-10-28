@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>XILI — Lyl Bah Demo, spécimen</title>
+<style>
+@font-face{
+  font-family:"LylBah";
+  src:url("/home/jhpy/Téléchargements/lyl-bah-demo/Lyl-Bah-Demo.ttf") format("truetype");
+  font-display:swap;
+}
+:root{
+  --bg:#16181D; --surface:#1E2128; --text:#E6E7EA; --dim:#8B8F99;
+  --primary:#7FA6C9; --accent:#C9A67F; --rule:#2A2E36;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif;font-size:14px;line-height:1.55;padding:32px 28px 48px}
+.wrap{max-width:1100px;margin:0 auto}
+.kicker{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);font-weight:700}
+h1{font-size:24px;font-weight:400;margin:6px 0 8px}
+.lede{color:var(--dim);max-width:820px;margin-bottom:22px}
+.bloc{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:20px 22px;margin-bottom:16px}
+.bloc h2{font-size:12px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px}
+.lyl{font-family:"LylBah","Lyl Bah Demo",cursive;font-size:44px;line-height:1.15;word-break:break-word}
+.lyl.sm{font-size:28px}
+.lyl.xs{font-size:19px}
+.paire{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:800px){.paire{grid-template-columns:1fr}}
+.note{font-size:12px;color:var(--dim);margin-top:10px;line-height:1.55}
+.note b{color:var(--text);font-weight:500}
+.alerte{border-left:2px solid #E08A8A;padding:12px 14px;background:#1A1D22;border-radius:0 6px 6px 0;margin-bottom:16px;font-size:13px;line-height:1.6}
+.alerte b{color:#E08A8A}
+.ok{border-left:2px solid var(--primary);padding:12px 14px;background:#1A1D22;border-radius:0 6px 6px 0;margin-bottom:16px;font-size:13px;line-height:1.6}
+code{font-family:"Liberation Mono","DejaVu Sans Mono",monospace;font-size:12px;color:var(--primary)}
+.motif{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">XILI · Étape 1 · typographie</div>
+  <h1>Lyl Bah Demo — spécimen</h1>
+  <p class="lede">
+    Ce que donne cette police sur les vrais textes de XILI. Deux tests :
+    le rendu de l'identité, et le rendu du français.
+  </p>
+
+  <div class="alerte">
+    <b>Licence : usage personnel uniquement.</b> Le fichier
+    <code>1001fonts-lyl-bah-demo-eula.txt</code> est une licence « Free For Personal Use » :
+    l'usage commercial est <b>interdit sans autorisation écrite de l'auteur</b>, et
+    l'embarquement dans une application n'est autorisé que si l'application est
+    un usage personnel <b>et ne distribue pas la police</b>.
+    XILI est un système d'exploitation distribué — donc un usage qui tombe hors de cette licence.
+  </div>
+
+  <div class="bloc">
+    <h2>Identité, trois sens</h2>
+    <div class="paire">
+      <div>
+        <div class="lyl motif">XILI</div>
+        <div class="note"><b>A</b> — « xili », jeu sur <em>système</em>. Identité technique, discrète.</div>
+      </div>
+      <div>
+        <div class="lyl motif"><span class="motif">X</span>ILI</div>
+        <div class="note"><b>B</b> — « X-ILI », l'inconnu + la racine d'<em>île</em>. Identité de territoire.</div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:16px"><b>C</b> — nom propre, neutre : la police ne dit rien, elle porte le nom tel quel.</div>
+  </div>
+
+  <div class="bloc">
+    <h2>La phrase d'identité</h2>
+    <div class="lyl sm">Le système, rien d'autre.</div>
+    <div class="lyl sm" style="margin-top:12px">Un territoire à soi.</div>
+    <div class="lyl sm" style="margin-top:12px">XILI. Un système.</div>
+    <div class="note">Trois phrases, trois sens. Si l'une sonne juste ici, le nom et la face vont ensemble.</div>
+  </div>
+
+  <div class="bloc">
+    <h2>La console de boot</h2>
+    <div class="lyl xs">XILI 0.1 · noyau x86-64</div>
+    <div class="lyl xs" style="margin-top:8px">128 Mio de calme</div>
+    <div class="lyl xs" style="margin-top:8px">mode long actif, console OK</div>
+    <div class="note">
+      Test réel : chiffres, points, astérisques et traits d'union. C'est ce que la console
+      écrit en permanence — si ces caractères manquent, la console ne peut pas s'en servir.
+    </div>
+  </div>
+
+  <div class="bloc">
+    <h2>Le français — le test qui compte</h2>
+    <div class="lyl xs">é è ê à â ç ù î ô û ë ï ü É È À Ç</div>
+    <div class="lyl xs" style="margin-top:8px">À propos · Mise à jour · réseau · système</div>
+    <div class="lyl xs" style="margin-top:8px">« guillemets » — tiret — … points de suspension</div>
+    <div class="note">
+      <b>Le fichier ne contient que :</b> l'espace, la virgule, le point, les chiffres et A-Z/a-z.
+      <b>Aucun accent, aucun caractère de ponctuation française.</b>
+      XILI est un projet francophone : ses documents, ses messages et son interface
+      utilisent des accents. Une face d'interface doit les couvrir.
+    </div>
+  </div>
+
+  <div class="ok">
+    <b>Ce qu'on peut faire de cette police sans la redistribuer.</b>
+    S'en servir pour le <em>logo</em> — un fichier image, pas une police embarquée —
+    pour un usage strictement personnel (maquette, écran de veille, capture).
+    C'est le seul usage que la licence autorise sans autorisation.
+  </div>
+
+</div>
+</body>
+</html>

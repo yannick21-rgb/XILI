@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  XILI — marque (emblème)
+
+  Source : /home/jhpy/Images/XILI-logo.svg (fourni par Jean Yannick, 2026-10-28).
+  Recadrée sur la forme réelle : viewBox d'origine A4 (595.276 x 841.89),
+  la marque occupe 400 x 400 ; on garde 30 de marge pour le stroke de 60.
+
+  Géométrie : deux disques (r = 100) aux centres (197.638, 286.338) et
+  (397.638, 486.338), plus un ruban en S dont deux arcs coïncident avec la
+  circonférence de ces disques. Les décalages entre les trois formes sont
+  créés par le stroke, pas par des trous dans les tracés.
+
+  Couleur : monochrome, pilotée par la variable CSS nommée marque
+  (défaut : Ivoire). docs/DESIGN.md §4.1 assigne Ivoire à « texte, logo ».
+  Le logo suit donc currentColor et s'adapte aux deux thèmes sans fichier
+  distinct.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="67.638 156.338 460 460"
+     role="img" aria-label="Emblème XILI">
+  <title>Emblème XILI</title>
+  <style>
+    .marque-forme {
+      fill: var(--marque, #F6F1E7);
+      stroke: var(--marque-fond, #12151F);
+      stroke-width: 60;
+      stroke-miterlimit: 10;
+    }
+  </style>
+  <g>
+    <path class="marque-forme" d="M297.638 286.338 C297.638 231.109 252.866 186.338 197.638 186.338 L417.638 186.338 C461.821 186.338 497.638 222.155 497.638 266.338 L497.638 486.338 C497.638 431.109 452.866 386.338 397.638 386.338 C342.409 386.338 297.638 431.109 297.638 486.338 C297.638 541.566 342.409 586.338 397.638 586.338 L177.638 586.338 C133.455 586.338 97.638 550.521 97.638 506.338 L97.638 286.338 C97.638 341.566 142.409 386.338 197.638 386.338 C252.866 386.338 297.638 341.566 297.638 286.338 Z"/>
+    <path class="marque-forme" d="M97.638 266.338 C97.638 222.155 133.455 186.338 177.638 186.338 L197.638 186.338 C252.866 186.338 297.638 231.109 297.638 286.338 C297.638 341.566 252.866 386.338 197.638 386.338 C142.409 386.338 97.638 341.566 97.638 286.338 Z"/>
+    <path class="marque-forme" d="M297.638 486.338 C297.638 431.109 342.409 386.338 397.638 386.338 C452.866 386.338 497.638 431.109 497.638 486.338 L497.638 506.338 C497.638 550.521 461.821 586.338 417.638 586.338 L397.638 586.338 C342.409 586.338 297.638 541.566 297.638 486.338 Z"/>
+  </g>
+</svg>

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>XILI — épreuve du 12 px</title>
+<style>
+@font-face { font-family: "Inter";     src: url("fonts-evaluation/Inter-var.ttf");         font-weight: 100 900; }
+@font-face { font-family: "PlexSans";  src: url("fonts-evaluation/PlexSans-var.ttf");      font-weight: 100 900; }
+@font-face { font-family: "JetBrains"; src: url("fonts-evaluation/JetBrainsMono-var.ttf"); font-weight: 100 900; }
+@font-face { font-family: "PlexMono";  src: url("fonts-evaluation/PlexMono-Regular.ttf");  font-weight: 400; }
+:root { --bg:#12151F; --surface:#20222B; --text:#F6F1E7; --text-dim:#8F8E8D;
+        --primary:#FF6B2C; --rule:#2B2D35; }
+* { box-sizing:border-box; margin:0; }
+body { background:var(--bg); color:var(--text); padding:20px; }
+.ligne { height:26px; display:flex; align-items:center; gap:10px; padding:0 8px;
+         border-bottom:1px solid var(--rule); }
+.lib { font:400 10px/1 sans-serif; color:var(--text-dim); width:92px; flex:none;
+       letter-spacing:.04em; }
+.vrai { font-size:12px; }          /* le rendu réel, tel quel */
+.gard { font-size:12px; }          /* même chose, pour la lisibilité de la planche */
+h2 { font:500 13px/1 sans-serif; color:var(--primary); margin:18px 0 6px; }
+</style>
+</head>
+<body>
+
+<h2>A / D — JetBrains Mono @ 12px</h2>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:JetBrains,monospace">xili@bureau:~$ make test — TEST OK (J1 + J2.3)</span></div>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:JetBrains,monospace">0123456789 O0 l1 I|Il1 — CR3=0x1000 #PF 0x0a</span></div>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:JetBrains,monospace">3 fichiers déplacés · Réinitialiser le bureau</span></div>
+
+<h2>B / C — IBM Plex Mono @ 12px</h2>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:PlexMono,monospace">xili@bureau:~$ make test — TEST OK (J1 + J2.3)</span></div>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:PlexMono,monospace">0123456789 O0 l1 I|Il1 — CR3=0x1000 #PF 0x0a</span></div>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:PlexMono,monospace">3 fichiers déplacés · Réinitialiser le bureau</span></div>
+
+<h2>A / B — Inter @ 12px (libellés de barre)</h2>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:Inter,sans-serif">Terminal · Fichiers · clair · 14:32 · Préférences</span></div>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:Inter,sans-serif">Enregistrer · Redémarrer · À propos de XILI · éèêàçù</span></div>
+
+<h2>C / D — IBM Plex Sans @ 12px (libellés de barre)</h2>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:PlexSans,sans-serif">Terminal · Fichiers · clair · 14:32 · Préférences</span></div>
+<div class="ligne"><span class="lib">réel 12</span><span class="vrai" style="font-family:PlexSans,sans-serif">Enregistrer · Redémarrer · À propos de XILI · éèêàçù</span></div>
+
+</body>
+</html>

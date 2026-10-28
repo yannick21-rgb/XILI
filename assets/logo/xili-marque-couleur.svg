@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  XILI — marque en couleurs
+
+  Source : /home/jhpy/Images/XILI-logo.svg (Jean Yannick, 2026-10-28),
+  coloriage relu sur xili-design/Logo en couleur.pdf.
+
+  Affectation des teintes (mesuree sur la planche, pas devinee) :
+    path 1  le ruban en S   -> Orange brule #FF6B2C
+    path 2  disque haut-g.  -> Safran       #FFC53D
+    path 3  disque bas-dr.  -> Safran       #FFC53D
+    stroke  les vides       -> Encre        #12151F
+
+  LA PLAQUE — mesurée, pas choisie
+  =================================
+  La planche pose la marque sur un carre encre arrondi des que le fond n'est
+  pas deja de l'encre. On la met donc TOUJOURS : sur fond sombre elle se
+  confond, sur fond clair elle porte la marque. Un seul fichier, tous les
+  fonds. C'est la plaque qui tient le contraste, jamais les teintes chaudes
+  seules — sur ivoire l'orange tombe a 2.52:1 (DESIGN.md §4.3).
+
+  La plaque vaut exactement l'emprise de la marque, strokes compris :
+  460 unites (67.638 a 527.638). Aucune marge. Verifie par mesure sur la
+  tuile ivoire de la planche, a taille native :
+
+      PDF : plaque 107x107, boite chaude 80x80  -> 74.8%
+      SVG : plaque 107x107, boite chaude 78x78  -> 72.9%
+
+  L'ecart de 2 px est de l'antialiasing entre deux rasteriseurs, pas de la
+  geometrie. Une premiere version portait la plaque a 540 unites (marge de
+  40) : la boite chaude y tombait a 62.3%, deux fois trop serre. D'ou la
+  regle — la plaque n'est pas un cadre autour du logo, c'est son gabarit.
+
+  Rayon : 21.3% du cote -> 98 sur 460. Mesure par ajustement circulaire sur
+  le profil du coin de la tuile ivoire (inset(k) = r - sqrt(r^2-(r-k)^2)),
+  la courbe s'arrete a k=9 sur un cote de 108. La methode est validée : en
+  l'appliquant a notre propre rendu, elle rend 18.5%, qui est exactement la
+  valeur connue (85/460) — donc elle ne ment pas. Un premier calcul par
+  simple profil donnait 18.5% pour la planche : faux, il s'arretait au
+  premier pixel nul, faussé par l'antialiasing. C'est la comparaison à 4x
+  qui a trahi l'erreur, pas la mesure native.
+
+  Note de taille : la marque ne se lit plus en dessous de ~24 px — a 16 px
+  elle se reduit a quatre points (verifie au rendu).
+
+  Les teintes de marque sont FIXES : la planche utilise le meme orange et le
+  meme safran sur les trois fonds. Seul le ruban passe en ivoire sur fond
+  orange (variante non utilisee par l'interface).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="67.638 156.338 460 460"
+     role="img" aria-label="Emblème XILI">
+  <title>Emblème XILI</title>
+  <rect x="67.638" y="156.338" width="460" height="460" rx="98" fill="#12151F"/>
+  <g stroke="#12151F" stroke-width="60" stroke-miterlimit="10">
+    <path fill="#FF6B2C" d="M297.638 286.338 C297.638 231.109 252.866 186.338 197.638 186.338 L417.638 186.338 C461.821 186.338 497.638 222.155 497.638 266.338 L497.638 486.338 C497.638 431.109 452.866 386.338 397.638 386.338 C342.409 386.338 297.638 431.109 297.638 486.338 C297.638 541.566 342.409 586.338 397.638 586.338 L177.638 586.338 C133.455 586.338 97.638 550.521 97.638 506.338 L97.638 286.338 C97.638 341.566 142.409 386.338 197.638 386.338 C252.866 386.338 297.638 341.566 297.638 286.338 Z"/>
+    <path fill="#FFC53D" d="M97.638 266.338 C97.638 222.155 133.455 186.338 177.638 186.338 L197.638 186.338 C252.866 186.338 297.638 231.109 297.638 286.338 C297.638 341.566 252.866 386.338 197.638 386.338 C142.409 386.338 97.638 341.566 97.638 286.338 Z"/>
+    <path fill="#FFC53D" d="M297.638 486.338 C297.638 431.109 342.409 386.338 397.638 386.338 C452.866 386.338 497.638 431.109 497.638 486.338 L497.638 506.338 C497.638 550.521 461.821 586.338 417.638 586.338 L397.638 586.338 C342.409 586.338 297.638 541.566 297.638 486.338 Z"/>
+  </g>
+</svg>

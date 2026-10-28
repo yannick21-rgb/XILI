@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>XILI — logo, essai</title>
+<style>
+@font-face{
+  font-family:"LylBah";
+  src:url("Lyl-Bah-Demo.ttf") format("truetype");
+  font-display:block;
+}
+:root{
+  --bg:#16181D; --surface:#1E2128; --text:#E6E7EA; --dim:#8B8F99;
+  --primary:#7FA6C9; --accent:#C9A67F; --rule:#2A2E36;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);
+  font-family:"Liberation Sans","DejaVu Sans",sans-serif;font-size:14px;line-height:1.55;padding:28px}
+.page{width:1600px;height:1000px;background:var(--bg);position:relative;overflow:hidden}
+.lyl{font-family:"LylBah",cursive}
+.std{font-family:"Liberation Sans","DejaVu Sans",sans-serif}
+.mono{font-family:"Liberation Mono","DejaVu Sans Mono",monospace}
+
+/* ----- planche 1 : le mot seul, trois sens ----- */
+.w1{width:1600px;height:480px;display:flex;align-items:center;justify-content:center;gap:90px}
+.w1 .item{text-align:center}
+.w1 .mot{font-size:150px;line-height:1}
+.w1 .cap{font-size:13px;color:var(--dim);margin-top:18px;letter-spacing:.12em;text-transform:uppercase}
+.a .mot{letter-spacing:.18em}
+.b .mot .x{color:var(--accent)}
+.c .mot{letter-spacing:.08em}
+
+/* ----- planche 2 : sur les fonds du système ----- */
+.w2{width:1600px;height:520px;display:flex}
+.half{width:50%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px}
+.half.clair{background:#F6F6F4;color:#1B1D22}
+.half.sombre{background:#16181D;color:#E6E7EA}
+.half.clair .lyl{color:#1B1D22}
+.half.sombre .lyl{color:#E6E7EA}
+.half .mot{font-size:118px;line-height:1}
+.half .sous{font-size:15px;letter-spacing:.02em}
+.half.clair .sous{color:#6B6E76}
+.half.sombre .sous{color:#8B8F99}
+.half .cap{font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.6}
+.clair .cap{color:#6B6E76}
+.sombre .cap{color:#8B8F99}
+</style>
+</head>
+<body>
+
+<!-- ============ planche 1 ============ -->
+<div class="page w1">
+  <div class="item a">
+    <div class="lyl mot">XILI</div>
+    <div class="cap">A · identité technique</div>
+  </div>
+  <div class="item b">
+    <div class="lyl mot"><span class="x">X</span>ILI</div>
+    <div class="cap">B · territoire</div>
+  </div>
+  <div class="item c">
+    <div class="lyl mot">XILI</div>
+    <div class="cap">C · nom propre</div>
+  </div>
+</div>
+
+<!-- ============ planche 2 ============ -->
+<div class="page w2">
+  <div class="half clair">
+    <div class="lyl mot">XILI</div>
+    <div class="sous std">Le système, rien d'autre.</div>
+    <div class="cap std">thème clair · police standard pour le texte</div>
+  </div>
+  <div class="half sombre">
+    <div class="lyl mot">XILI</div>
+    <div class="sous std">Le système, rien d'autre.</div>
+    <div class="cap std">thème sombre · police standard pour le texte</div>
+  </div>
+</div>
+
+</body>
+</html>

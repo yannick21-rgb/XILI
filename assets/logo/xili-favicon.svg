@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  XILI — favicon (marque en couleurs, teintes figees)
+
+  Meme geometrie et meme teintes que xili-marque-couleur.svg, sans variable
+  CSS : un favicon est rendu hors de la page, il n'herite de rien.
+
+  Plaque encre toujours presente, exactement sur l'emprise du trait (460
+  unites, rayon 98) : sur fond sombre elle se confond, sur fond clair elle
+  porte la marque. C'est la plaque qui rend le logo lisible partout — jamais
+  les teintes chaudes seules, qui tombent a 2.52:1 sur ivoire (§4.3).
+  Proportions mesurées sur xili-design/Logo en couleur.pdf, voir le fichier
+  couleur pour le detail du calcul.
+
+  Note de taille : la marque ne se lit plus en dessous de ~24 px — a 16 px
+  elle se reduit a quatre points (verifie au rendu). Ce fichier sert donc aux
+  navigateurs qui agrandissent, pas au lisible a 16 px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="67.638 156.338 460 460">
+  <rect x="67.638" y="156.338" width="460" height="460" rx="98" fill="#12151F"/>
+  <g stroke="#12151F" stroke-width="60" stroke-miterlimit="10">
+    <path fill="#FF6B2C" d="M297.638 286.338 C297.638 231.109 252.866 186.338 197.638 186.338 L417.638 186.338 C461.821 186.338 497.638 222.155 497.638 266.338 L497.638 486.338 C497.638 431.109 452.866 386.338 397.638 386.338 C342.409 386.338 297.638 431.109 297.638 486.338 C297.638 541.566 342.409 586.338 397.638 586.338 L177.638 586.338 C133.455 586.338 97.638 550.521 97.638 506.338 L97.638 286.338 C97.638 341.566 142.409 386.338 197.638 386.338 C252.866 386.338 297.638 341.566 297.638 286.338 Z"/>
+    <path fill="#FFC53D" d="M97.638 266.338 C97.638 222.155 133.455 186.338 177.638 186.338 L197.638 186.338 C252.866 186.338 297.638 231.109 297.638 286.338 C297.638 341.566 252.866 386.338 197.638 386.338 C142.409 386.338 97.638 341.566 97.638 286.338 Z"/>
+    <path fill="#FFC53D" d="M297.638 486.338 C297.638 431.109 342.409 386.338 397.638 386.338 C452.866 386.338 497.638 431.109 497.638 486.338 L497.638 506.338 C497.638 550.521 461.821 586.338 417.638 586.338 L397.638 586.338 C342.409 586.338 297.638 541.566 297.638 486.338 Z"/>
+  </g>
+</svg>

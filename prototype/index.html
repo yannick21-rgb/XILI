@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="sombre">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XILI — bureau (maquette)</title>
+<link rel="icon" href="../assets/logo/xili-favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Barre haute : menu à gauche, tâches au centre, état à droite -->
+<header id="barre">
+  <div class="barre-cote">
+    <button id="bouton-menu" class="barre-bouton" aria-haspopup="true" aria-expanded="false">
+      <svg class="barre-marque" viewBox="67.638 156.338 460 460" role="img" aria-label="Emblème XILI">
+        <rect x="67.638" y="156.338" width="460" height="460" rx="98" fill="#12151F"/>
+        <g stroke="#12151F" stroke-width="60" stroke-miterlimit="10">
+          <path fill="#FF6B2C" d="M297.638 286.338 C297.638 231.109 252.866 186.338 197.638 186.338 L417.638 186.338 C461.821 186.338 497.638 222.155 497.638 266.338 L497.638 486.338 C497.638 431.109 452.866 386.338 397.638 386.338 C342.409 386.338 297.638 431.109 297.638 486.338 C297.638 541.566 342.409 586.338 397.638 586.338 L177.638 586.338 C133.455 586.338 97.638 550.521 97.638 506.338 L97.638 286.338 C97.638 341.566 142.409 386.338 197.638 386.338 C252.866 386.338 297.638 341.566 297.638 286.338 Z"/>
+          <path fill="#FFC53D" d="M97.638 266.338 C97.638 222.155 133.455 186.338 177.638 186.338 L197.638 186.338 C252.866 186.338 297.638 231.109 297.638 286.338 C297.638 341.566 252.866 386.338 197.638 386.338 C142.409 386.338 97.638 341.566 97.638 286.338 Z"/>
+          <path fill="#FFC53D" d="M297.638 486.338 C297.638 431.109 342.409 386.338 397.638 386.338 C452.866 386.338 497.638 431.109 497.638 486.338 L497.638 506.338 C497.638 550.521 461.821 586.338 417.638 586.338 L397.638 586.338 C342.409 586.338 297.638 541.566 297.638 486.338 Z"/>
+        </g>
+      </svg>
+      <span>XILI</span>
+    </button>
+  </div>
+  <div id="barre-taches" class="barre-taches" aria-label="Fenêtres ouvertes"></div>
+  <div class="barre-cote barre-cote-droite">
+    <button id="bascule-theme" class="barre-bouton" title="Changer de thème (Ctrl+Alt+L)">clair</button>
+    <span id="horloge" class="barre-horloge">--:--</span>
+  </div>
+</header>
+
+<!-- Menu XILI -->
+<nav id="menu" class="menu" hidden aria-label="Menu principal">
+  <button class="menu-item" data-action="terminal">Ouvrir le terminal <span>Ctrl+Alt+T</span></button>
+  <button class="menu-item" data-action="fichiers">Ouvrir les fichiers <span>Ctrl+Alt+F</span></button>
+  <hr class="menu-filet">
+  <div class="menu-bloc">
+    <span class="menu-libelle">Lisière de la fenêtre active</span>
+    <div class="menu-lisieres">
+      <input type="color" id="couleur-lisiere" value="#FF6B2C" title="Couleur libre de la lisière">
+      <button class="menu-pastille" data-lisiere="#FF6B2C" style="--c:#FF6B2C" title="Orange brûlé — accent principal"></button>
+      <button class="menu-pastille" data-lisiere="#FFC53D" style="--c:#FFC53D" title="Safran — accent secondaire"></button>
+      <button class="menu-pastille" data-lisiere="#F6F1E7" style="--c:#F6F1E7" title="Ivoire — neutre"></button>
+    </div>
+  </div>
+  <hr class="menu-filet">
+  <button class="menu-item" data-action="animations">Animations&nbsp;: <span id="etat-animations">actives</span></button>
+  <button class="menu-item" data-action="restart">Réinitialiser le bureau</button>
+  <hr class="menu-filet">
+  <button class="menu-item" data-action="propos">À propos de XILI</button>
+</nav>
+
+<!-- Bureau : épingles + fenêtres -->
+<main id="bureau">
+  <div id="epingles" aria-label="Épingles du bureau"></div>
+</main>
+
+<!-- Modèle de fenêtre -->
+<template id="modele-fenetre">
+  <section class="fenetre" tabindex="-1">
+    <header class="fenetre-titre"><span class="fenetre-nom"></span></header>
+    <div class="fenetre-corps"></div>
+    <footer class="fenetre-pied">
+      <div class="fenetre-controles">
+        <button class="fenetre-bouton" data-bouton="fermer" title="Fermer">✕</button>
+        <button class="fenetre-bouton" data-bouton="minimiser" title="Réduire">–</button>
+        <button class="fenetre-bouton" data-bouton="agrandir" title="Agrandir">⤢</button>
+      </div>
+      <div class="fenetre-poignee" title="Redimensionner"></div>
+    </footer>
+  </section>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

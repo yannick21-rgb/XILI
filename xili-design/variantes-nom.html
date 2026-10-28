@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XILI — trois sens pour un nom</title>
+<style>
+/* Jetons du DESIGN.md (thème sombre, provisoire) */
+:root{
+  --bg:#16181D; --surface:#1E2128; --text:#E6E7EA; --dim:#8B8F99;
+  --primary:#7FA6C9; --accent:#C9A67F; --rule:#2A2E36;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:"Liberation Sans","DejaVu Sans",-apple-system,sans-serif;
+  font-size:14px; line-height:1.5; padding:32px 28px 48px;
+}
+.mono{font-family:"Liberation Mono","DejaVu Sans Mono",monospace}
+
+/* ---------- en-tête ---------- */
+header{max-width:1240px;margin:0 auto 28px}
+.kicker{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);font-weight:700}
+h1{font-size:26px;font-weight:400;letter-spacing:-.01em;margin:6px 0 10px}
+.lede{color:var(--dim);font-size:14px;max-width:780px}
+.regles{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
+.regle{font-size:11px;color:var(--dim);border:1px solid var(--rule);border-radius:99px;padding:4px 11px}
+
+/* ---------- grille des trois ---------- */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:1240px;margin:0 auto}
+@media(max-width:1000px){.grid{grid-template-columns:1fr}}
+.col{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.col.a{border-top:2px solid var(--primary)}
+.col.b{border-top:2px solid var(--accent)}
+.col.c{border-top:2px solid var(--rule)}
+
+/* lettre du candidat */
+.lettre{display:flex;align-items:baseline;gap:10px}
+.lettre .L{width:26px;height:26px;border-radius:4px;border:1px solid var(--rule);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--primary);flex:none}
+.lettre h2{font-size:15px;font-weight:500}
+.lettre .tag{margin-left:auto;font-size:10px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+
+/* le nom, décliné */
+.nom{padding:22px 0 18px;text-align:center;border-bottom:1px solid var(--rule)}
+.nom .mot{font-size:34px;letter-spacing:.02em}
+.nom .sous{font-size:11px;color:var(--dim);margin-top:6px;letter-spacing:.08em;text-transform:uppercase}
+
+/* déclinaison A : technique, discrète, presque abstraite */
+.col.a .mot{font-family:"Liberation Mono","DejaVu Sans Mono",monospace;letter-spacing:.22em;font-weight:400}
+/* déclinaison B : espace, refuge */
+.col.b .mot{font-weight:400;letter-spacing:.06em}
+.col.b .mot .x{color:var(--accent)}
+/* déclinaison C : nom propre, neutre */
+.col.c .mot{font-weight:400;letter-spacing:.1em}
+
+/* phrase d'identité */
+.phrase{font-size:15px;line-height:1.5;border-left:2px solid var(--rule);padding-left:12px}
+.col.a .phrase{border-left-color:var(--primary)}
+.col.b .phrase{border-left-color:var(--accent)}
+.col.c .phrase{border-left-color:var(--dim)}
+
+/* ce que ça change */
+.change{font-size:12px;color:var(--dim);line-height:1.55}
+.change b{color:var(--text);font-weight:500}
+
+/* console */
+.console{background:#121418;border:1px solid var(--rule);border-radius:6px;padding:12px 13px;font-size:12px;line-height:1.7}
+.console .ligne{white-space:pre-wrap;word-break:break-word}
+.console .info{color:var(--dim)}
+.console .ok{color:var(--primary)}
+.console .warn{color:var(--accent)}
+.console .err{color:#E08A8A}
+.console .invite{color:var(--dim)}
+
+/* verdict */
+.verdict{margin-top:auto;padding-top:14px;border-top:1px solid var(--rule);font-size:12px;color:var(--dim);line-height:1.55}
+.verdict b{color:var(--text);font-weight:500}
+
+/* ---------- pied ---------- */
+footer{max-width:1240px;margin:28px auto 0;padding-top:16px;border-top:1px solid var(--rule);font-size:12px;color:var(--dim);line-height:1.6}
+footer code{font-family:"Liberation Mono","DejaVu Sans Mono",monospace;font-size:11px;color:var(--text)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kicker">XILI · Étape 1 · décision de design</div>
+  <h1>Trois sens pour un nom</h1>
+  <p class="lede">
+    Le nom est déjà celui du dépôt, mais aucune signification n'est écrite nulle part.
+    Ces trois déclinaisons sont le <b>même système</b> vu par trois noms : la console
+    de boot, la phrase d'identité, et trois messages. Ce qui change n'est pas le goût,
+    c'est ce que le nom <em>fait</em> au produit.
+  </p>
+  <div class="regles">
+    <span class="regle">décision 1 sur 10</span>
+    <span class="regle">étape 1 sur 4</span>
+    <span class="regle">jalon J0</span>
+    <span class="regle">1 session</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- ================= A ================= -->
+  <article class="col a">
+    <div class="lettre"><span class="L">A</span><h2>« xili » — un jeu sur <em>sily</em> / <em>système</em></h2><span class="tag">abstrait</span></div>
+
+    <div class="nom">
+      <div class="mot">xili</div>
+      <div class="sous">minuscule · espacé · mono</div>
+    </div>
+
+    <p class="phrase">Le système, rien d'autre.</p>
+
+    <p class="change">
+      <b>Ce que ça change.</b> Le nom dit ce que c'est : une machine. Il ne
+      promet ni douceur ni refuge, il annonce la matière. Tout le design peut
+      alors être sec, précis, et se permettre la rudesse — la technique est
+      le sujet, pas un détail à habiller.
+    </p>
+
+    <div class="console mono">
+      <div class="ligne info">xili 0.1 · noyau x86-64</div>
+      <div class="ligne ok">128 Mio disponibles · mode long actif</div>
+      <div class="ligne info">3 tâches · 0 attente</div>
+      <div class="ligne invite">$ <span class="info">_</span></div>
+    </div>
+
+    <div class="verdict">
+      <b>Pour :</b> cohérence avec un noyau écrit pour être lu. Un nom qui ne
+      vend rien laisse le produit se défendre seul.<br>
+      <b>Contre :</b> illisible pour qui ne lit pas le jeu de mots. Le projet
+      devient difficile à prononcer et à chercher.
+    </div>
+  </article>
+
+  <!-- ================= B ================= -->
+  <article class="col b">
+    <div class="lettre"><span class="L">B</span><h2>« X-ILI » — l'inconnu, et la racine d'<em>île</em></h2><span class="tag">territoire</span></div>
+
+    <div class="nom">
+      <div class="mot"><span class="x">X</span>&#8202;ILI</div>
+      <div class="sous">le X comme l'inconnu · l'ÎLE comme le chez-soi</div>
+    </div>
+
+    <p class="phrase">Un territoire à soi.</p>
+
+    <p class="change">
+      <b>Ce que ça change.</b> Le nom dit ce qu'on y fait : habiter. Le design
+      peut alors porter la promesse de calme, de place, de refuge — et le
+      budget de rendu, qui interdit le verre et le flou, devient une
+      <em>cohérence</em> au lieu d'une frustration : un territoire se découpe en
+      aplats et en limites nettes, pas en transparence.
+    </p>
+
+    <div class="console mono">
+      <div class="ligne info">XILI 0.1 · l'île est prête</div>
+      <div class="ligne ok">128 Mio de calme</div>
+      <div class="ligne info">personne d'autre sur le système</div>
+      <div class="ligne invite">$ <span class="info">_</span></div>
+    </div>
+
+    <div class="verdict">
+      <b>Pour :</b> une histoire à raconter, une identité qui tient debout sans
+      argument technique, et qui sert le recrutement de contributeurs.<br>
+      <b>Contre :</b> risque de promettre une douceur que le produit ne peut
+      pas encore tenir. Il faut alors que chaque message tienne son rang.
+    </div>
+  </article>
+
+  <!-- ================= C ================= -->
+  <article class="col c">
+    <div class="lettre"><span class="L">C</span><h2>Aucune signification — un nom propre</h2><span class="tag">neutre</span></div>
+
+    <div class="nom">
+      <div class="mot">XILI</div>
+      <div class="sous">comme Haiku · comme Minix</div>
+    </div>
+
+    <p class="phrase">XILI. Un système.</p>
+
+    <p class="change">
+      <b>Ce que ça change.</b> Rien, et c'est le point : la liberté totale. Le
+      nom ne tire le design dans aucune direction, donc le design se décide sur
+      ses propres arguments — le budget de rendu, l'usage, la machine cible.
+      C'est le choix le plus honnête et le moins risqué.
+    </p>
+
+    <div class="console mono">
+      <div class="ligne info">XILI 0.1 · noyau</div>
+      <div class="ligne ok">128 Mio RAM</div>
+      <div class="ligne info">prêt</div>
+      <div class="ligne invite">$ <span class="info">_</span></div>
+    </div>
+
+    <div class="verdict">
+      <b>Pour :</b> zéro contrainte, zéro traduction à maintenir, et un nom
+      qu'on peut porter tel quel partout.<br>
+      <b>Contre :</b> aucune histoire. Il faudra bien écrire l'identité
+      ailleurs, sans qu'elle soit portée par le nom.
+    </div>
+  </article>
+
+</div>
+
+<footer>
+  <p><b>Ce que cette page ne tranche pas.</b> Elle montre, elle ne décide pas. La règle du
+  projet (<code>docs/AI-WORKFLOW.md</code> §10) : une décision de design est à Jean Yannick.</p>
+  <p>La question n'est pas « lequel est le plus beau » mais <b>lequel rend le produit plus
+  cohérent</b> — et si le nom porte le design, ou si le design porte le nom.</p>
+  <p>Source : <code>docs/DESIGN.md</code> §1 · todo : <code>Obsidian-Vault/Pilotage/XILI — Design.md</code></p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="sombre">
+<head>
+<meta charset="utf-8">
+<title>XILI — comparaison typographique</title>
+<style>
+/* Évaluation uniquement — les polices viennent de fonts-evaluation/ */
+@font-face { font-family: "Inter";     src: url("fonts-evaluation/Inter-var.ttf");         font-weight: 100 900; }
+@font-face { font-family: "PlexSans";  src: url("fonts-evaluation/PlexSans-var.ttf");      font-weight: 100 900; }
+@font-face { font-family: "JetBrains"; src: url("fonts-evaluation/JetBrainsMono-var.ttf"); font-weight: 100 900; }
+@font-face { font-family: "PlexMono";  src: url("fonts-evaluation/PlexMono-Regular.ttf");  font-weight: 400; }
+@font-face { font-family: "PlexMono";  src: url("fonts-evaluation/PlexMono-Medium.ttf");   font-weight: 500; }
+
+/* Jetons DESIGN.md §4.2 */
+:root {
+  --bg: #12151F; --surface: #20222B; --text: #F6F1E7; --text-dim: #8F8E8D;
+  --primary: #FF6B2C; --accent: #FFC53D; --rule: #2B2D35;
+  --text-xs: 12px; --text-sm: 14px; --text-md: 16px; --text-lg: 20px; --text-xl: 28px;
+}
+[data-theme="clair"] {
+  --bg: #F6F1E7; --surface: #FBF9F5; --text: #12151F; --text-dim: #69696B;
+  --primary: #BF3900; --accent: #8E6400; --rule: #DBD7CF;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--bg); color: var(--text); padding: 24px;
+       font-family: "PlexSans", sans-serif; }
+
+h1 { font-size: var(--text-xl); margin-bottom: 4px; }
+.sous-titre { color: var(--text-dim); font-size: var(--text-sm); margin-bottom: 24px; }
+
+.bloc { border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.bloc-tete { display: flex; justify-content: space-between; align-items: baseline;
+             margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
+.bloc-nom { font-size: var(--text-sm); font-weight: 500; }
+.bloc-note { font-size: var(--text-xs); color: var(--text-dim); }
+
+/* Le vrai contenu : la barre XILI */
+.barre-mock { display: flex; align-items: center; gap: 16px; height: 32px;
+              padding: 0 12px; background: var(--surface);
+              border: 1px solid var(--rule); border-radius: 4px; margin-bottom: 12px; }
+.barre-mock .tache { font-size: var(--text-xs); color: var(--text-dim);
+                     padding: 2px 8px; border: 1px solid transparent; border-radius: 4px; }
+.barre-mock .tache.active { color: var(--text); border-color: var(--primary); }
+.barre-mock .droite { margin-left: auto; font-size: var(--text-xs);
+                      color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* La vraie fenêtre : titre en bas-droite comme §10.2 */
+.fenetre-mock { background: var(--surface); border: 1px solid var(--rule);
+                border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+.fenetre-mock .titre { padding: 6px 10px; font-size: var(--text-xs);
+                       border-bottom: 1px solid var(--rule); color: var(--text-dim); }
+.fenetre-mock .corps { padding: 10px; font-size: var(--text-sm); }
+.fenetre-mock .pied { display: flex; justify-content: flex-end; gap: 8px;
+                      padding: 6px 10px; border-top: 1px solid var(--rule);
+                      font-size: var(--text-xs); color: var(--text-dim); }
+
+/* Terminal — le citoyen de première classe (§5) */
+.term { font-size: var(--text-sm); line-height: 1.45; }
+.term .cmd { color: var(--text); }
+.term .prompt { color: var(--primary); }
+.term .dim { color: var(--text-dim); }
+
+/* Gamme des tailles */
+.gamme div { margin-bottom: 2px; }
+.gamme .lib { color: var(--text-dim); font-size: var(--text-xs); }
+
+/* Épreuve mono : 0/O 1/l/I + adresses noyau */
+.epreuve { font-size: var(--text-md); line-height: 1.6; }
+.epreuve .crit { color: var(--accent); }
+
+.paire { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .paire { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Typographie XILI</h1>
+<p class="sous-titre">Quatre binômes, contenu réel du bureau, tailles du DESIGN.md §5.
+Chaque bloc est rendu dans sa propre famille — aucune substitution.</p>
+
+<!-- ============ INTER + JETBRAINS MONO ============ -->
+<div class="bloc" style="font-family: Inter, sans-serif">
+  <div class="bloc-tete">
+    <span class="bloc-nom">A — Inter + JetBrains Mono</span>
+    <span class="bloc-note">x-height 55 % · OFL · 877 + 187 Ko</span>
+  </div>
+
+  <div class="barre-mock">
+    <span style="font-size:12px;font-weight:500">XILI</span>
+    <span class="tache active">Terminal</span>
+    <span class="tache">Fichiers</span>
+    <span class="droite">clair 14:32</span>
+  </div>
+
+  <div class="fenetre-mock">
+    <div class="titre">Terminal — xili@bureau</div>
+    <div class="corps term" style="font-family: JetBrains, monospace">
+      <div><span class="prompt">xili</span> $ make test</div>
+      <div class="dim">TEST OK — BIOS (J1 + J2.3)</div>
+      <div><span class="prompt">xili</span> $ ls -la</div>
+      <div class="dim">drwxr-xr-x  kernel  boot  docs</div>
+    </div>
+    <div class="pied"><span>✕</span><span>–</span><span>⤢</span></div>
+  </div>
+
+  <div class="gamme">
+    <div><span class="lib">text-xs 12</span> — 3 fichiers déplacés · Réinitialiser le bureau</div>
+    <div><span class="lib">text-sm 14</span> — Enregistrer · Redémarrer · Une erreur dit ce qui s'est passé</div>
+    <div><span class="lib">text-md 16</span> — Le terminal est un citoyen de première classe</div>
+    <div><span class="lib">text-lg 20</span> — Préférences</div>
+    <div><span class="lib">text-xl 28</span> — À propos de XILI</div>
+  </div>
+
+  <div class="epreuve" style="font-family: JetBrains, monospace; margin-top:12px;
+       padding-top:12px; border-top:1px solid var(--rule)">
+    <div>0123456789 <span class="crit">O</span>0 <span class="crit">l</span>1
+         <span class="crit">I</span> <span class="crit">|</span>Il1</div>
+    <div>0xFFFFFFFF80000000 · CR3 = 0x1000 · #PF err 0x0a</div>
+  </div>
+</div>
+
+<!-- ============ INTER + PLEX MONO ============ -->
+<div class="bloc" style="font-family: Inter, sans-serif">
+  <div class="bloc-tete">
+    <span class="bloc-nom">B — Inter + IBM Plex Mono</span>
+    <span class="bloc-note">x-height 55 % / 52 % · OFL · 877 + 272 Ko</span>
+  </div>
+
+  <div class="barre-mock">
+    <span style="font-size:12px;font-weight:500">XILI</span>
+    <span class="tache active">Terminal</span>
+    <span class="tache">Fichiers</span>
+    <span class="droite">clair 14:32</span>
+  </div>
+
+  <div class="fenetre-mock">
+    <div class="titre">Terminal — xili@bureau</div>
+    <div class="corps term" style="font-family: PlexMono, monospace">
+      <div><span class="prompt">xili</span> $ make test</div>
+      <div class="dim">TEST OK — BIOS (J1 + J2.3)</div>
+      <div><span class="prompt">xili</span> $ ls -la</div>
+      <div class="dim">drwxr-xr-x  kernel  boot  docs</div>
+    </div>
+    <div class="pied"><span>✕</span><span>–</span><span>⤢</span></div>
+  </div>
+
+  <div class="gamme">
+    <div><span class="lib">text-xs 12</span> — 3 fichiers déplacés · Réinitialiser le bureau</div>
+    <div><span class="lib">text-sm 14</span> — Enregistrer · Redémarrer · Une erreur dit ce qui s'est passé</div>
+    <div><span class="lib">text-md 16</span> — Le terminal est un citoyen de première classe</div>
+    <div><span class="lib">text-lg 20</span> — Préférences</div>
+    <div><span class="lib">text-xl 28</span> — À propos de XILI</div>
+  </div>
+
+  <div class="epreuve" style="font-family: PlexMono, monospace; margin-top:12px;
+       padding-top:12px; border-top:1px solid var(--rule)">
+    <div>0123456789 <span class="crit">O</span>0 <span class="crit">l</span>1
+         <span class="crit">I</span> <span class="crit">|</span>Il1</div>
+    <div>0xFFFFFFFF80000000 · CR3 = 0x1000 · #PF err 0x0a</div>
+  </div>
+</div>
+
+<!-- ============ PLEX SANS + PLEX MONO ============ -->
+<div class="bloc" style="font-family: PlexSans, sans-serif">
+  <div class="bloc-tete">
+    <span class="bloc-nom">C — IBM Plex Sans + IBM Plex Mono</span>
+    <span class="bloc-note">x-height 52 % · OFL · 537 + 272 Ko · une seule famille</span>
+  </div>
+
+  <div class="barre-mock">
+    <span style="font-size:12px;font-weight:500">XILI</span>
+    <span class="tache active">Terminal</span>
+    <span class="tache">Fichiers</span>
+    <span class="droite">clair 14:32</span>
+  </div>
+
+  <div class="fenetre-mock">
+    <div class="titre">Terminal — xili@bureau</div>
+    <div class="corps term" style="font-family: PlexMono, monospace">
+      <div><span class="prompt">xili</span> $ make test</div>
+      <div class="dim">TEST OK — BIOS (J1 + J2.3)</div>
+      <div><span class="prompt">xili</span> $ ls -la</div>
+      <div class="dim">drwxr-xr-x  kernel  boot  docs</div>
+    </div>
+    <div class="pied"><span>✕</span><span>–</span><span>⤢</span></div>
+  </div>
+
+  <div class="gamme">
+    <div><span class="lib">text-xs 12</span> — 3 fichiers déplacés · Réinitialiser le bureau</div>
+    <div><span class="lib">text-sm 14</span> — Enregistrer · Redémarrer · Une erreur dit ce qui s'est passé</div>
+    <div><span class="lib">text-md 16</span> — Le terminal est un citoyen de première classe</div>
+    <div><span class="lib">text-lg 20</span> — Préférences</div>
+    <div><span class="lib">text-xl 28</span> — À propos de XILI</div>
+  </div>
+
+  <div class="epreuve" style="font-family: PlexMono, monospace; margin-top:12px;
+       padding-top:12px; border-top:1px solid var(--rule)">
+    <div>0123456789 <span class="crit">O</span>0 <span class="crit">l</span>1
+         <span class="crit">I</span> <span class="crit">|</span>Il1</div>
+    <div>0xFFFFFFFF80000000 · CR3 = 0x1000 · #PF err 0x0a</div>
+  </div>
+</div>
+
+<!-- ============ PLEX SANS + JETBRAINS ============ -->
+<div class="bloc" style="font-family: PlexSans, sans-serif">
+  <div class="bloc-tete">
+    <span class="bloc-nom">D — IBM Plex Sans + JetBrains Mono</span>
+    <span class="bloc-note">x-height 52 % / 55 % · OFL · 537 + 187 Ko</span>
+  </div>
+
+  <div class="barre-mock">
+    <span style="font-size:12px;font-weight:500">XILI</span>
+    <span class="tache active">Terminal</span>
+    <span class="tache">Fichiers</span>
+    <span class="droite">clair 14:32</span>
+  </div>
+
+  <div class="fenetre-mock">
+    <div class="titre">Terminal — xili@bureau</div>
+    <div class="corps term" style="font-family: JetBrains, monospace">
+      <div><span class="prompt">xili</span> $ make test</div>
+      <div class="dim">TEST OK — BIOS (J1 + J2.3)</div>
+      <div><span class="prompt">xili</span> $ ls -la</div>
+      <div class="dim">drwxr-xr-x  kernel  boot  docs</div>
+    </div>
+    <div class="pied"><span>✕</span><span>–</span><span>⤢</span></div>
+  </div>
+
+  <div class="gamme">
+    <div><span class="lib">text-xs 12</span> — 3 fichiers déplacés · Réinitialiser le bureau</div>
+    <div><span class="lib">text-sm 14</span> — Enregistrer · Redémarrer · Une erreur dit ce qui s'est passé</div>
+    <div><span class="lib">text-md 16</span> — Le terminal est un citoyen de première classe</div>
+    <div><span class="lib">text-lg 20</span> — Préférences</div>
+    <div><span class="lib">text-xl 28</span> — À propos de XILI</div>
+  </div>
+
+  <div class="epreuve" style="font-family: JetBrains, monospace; margin-top:12px;
+       padding-top:12px; border-top:1px solid var(--rule)">
+    <div>0123456789 <span class="crit">O</span>0 <span class="crit">l</span>1
+         <span class="crit">I</span> <span class="crit">|</span>Il1</div>
+    <div>0xFFFFFFFF80000000 · CR3 = 0x1000 · #PF err 0x0a</div>
+  </div>
+</div>
+
+</body>
+</html>

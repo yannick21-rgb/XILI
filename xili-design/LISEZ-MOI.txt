@@ -1,0 +1,44 @@
+XILI — dossier de travail du design
+====================================
+
+Ce dossier contient les essais et les fichiers de travail. Rien ici n'est
+encore décidé : une décision de design est à Jean Yannick
+(docs/AI-WORKFLOW.md §10).
+
+Fichiers
+--------
+
+variantes-nom.html      les 3 sens possibles du nom (A / B / C), à l'écran
+specimen-lyl-bah.html   la police Lyl Bah Demo testée sur les vrais textes
+logo-essai.html         le mot décliné en Lyl Bah Demo, sur fond clair et sombre
+generer-logo.py         régénère les PNG du logo (python3 generer-logo.py)
+
+Les PNG du logo sont dans /home/jhpy/XILI/assets/logo/
+
+Police Lyl Bah Demo — CE QU'IL FAUT SAVOIR
+------------------------------------------
+
+Licence : « Free For Personal Use » (1001Fonts). Usage commercial interdit
+sans autorisation écrite. Embarquement dans une application seulement si
+l'application est un usage personnel ET ne distribue pas la police.
+
+Version demo : le glyphe « 0 » porte un filigrane « demo font sider.com ».
+Ne jamais utiliser cette police pour un texte contenant des chiffres.
+
+Jeu de caractères : espace, virgule, point, chiffres, A-Z, a-z. Aucun accent,
+aucune ponctuation française. Les signes manquants s'affichent en bloc plein.
+
+Conclusion : cette police ne sert qu'au LOGOTYPE (un fichier image), et
+uniquement pour le mot « XILI » sans chiffres ni ponctuation. Pour tout le
+reste — interface, documents, console, messages — il faut une police libre.
+
+Police pour le reste (décision 4, non tranchée)
+-----------------------------------------------
+
+docs/DESIGN.md propose : sans-serif à œil bas (style Inter / IBM Plex Sans)
+et monospace (style JetBrains Mono / IBM Plex Mono). Aucune des deux n'est
+installée sur cette machine — seules sont présentes Noto Sans, DejaVu,
+Liberation, Nimbus et FreeSans.
+
+Inter et IBM Plex sont sous licence SIL OFL : libres, embarquables, avec les
+accents. C'est la piste à suivre pour XILI.

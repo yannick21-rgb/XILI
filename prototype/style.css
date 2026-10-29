@@ -17,6 +17,7 @@
   --primary:  #FF6B2C;
   --accent:   #FFC53D;
   --rule:     #2B2D35;
+  --inactif:  rgba(18, 21, 31, 0.28);
 }
 
 [data-theme="clair"] {
@@ -27,11 +28,34 @@
   --primary:  #BF3900;
   --accent:   #8E6400;
   --rule:     #DBD7CF;
+  --inactif:  rgba(246, 241, 231, 0.42);
+}
+
+/* --- Polices (§5, décision 2026-10-29) ------------------------------------
+   Binôme retenu : Inter (interface) + JetBrains Mono (mono).
+   Sous-ensembles latin + accents français, générés par pyftsubset depuis
+   les TTF complets de xili-design/fonts-evaluation/.
+   Licence : SIL OFL 1.1 — redistribuable, les fichiers OFL.txt accompagnent
+   les sources dans assets/fonts/. */
+
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/inter-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../assets/fonts/jetbrainsmono-latin.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
 }
 
 :root {
-  --font-ui:   "Inter", "IBM Plex Sans", system-ui, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+  --font-ui:   "Inter", system-ui, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
 
   --text-xs: 12px;
   --text-sm: 14px;
@@ -40,8 +64,8 @@
   --text-xl: 28px;
 
   --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-md: 12px;   /* ouvert 8 → 12 (§6, 2026-10-29) */
+  --radius-lg: 20px;   /* ouvert 12 → 20 */
   --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
   --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
   --hit: 32px;
@@ -56,7 +80,8 @@
      Défaut = primary du thème : c'est une bordure, elle doit tenir 3:1 sur le
      fond. L'utilisateur peut en mettre une autre ; là, c'est son choix. */
   --lisiere: var(--primary);
-  --lisiere-bande: 0 0 0 2px var(--lisiere);   /* spread pur : bande nette, sans flou */
+  --lisiere-bande: 0 0 0 2px var(--lisiere);    /* arête nette : spread, sans flou — §3 « de base » */
+  --lisiere-halo:  0 0 14px 2px var(--lisiere); /* lumière : flou réel — exception §3, §10.5 */
 }
 
 /* --- Base ------------------------------------------------------------------ */
@@ -131,6 +156,18 @@ body.sans-animations *::after {
 
 .barre-bouton:hover,
 .barre-bouton[aria-expanded="true"] { background: var(--rule); }
+
+/* Indicateur de mosaïque (§10.6) — état visible en permanence dans la barre */
+.barre-mosaique[data-active="true"] {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.barre-mosaique .pastille {
+  width: 6px; height: 6px;
+  background: currentColor;
+  opacity: .35;
+}
+.barre-mosaique[data-active="true"] .pastille { opacity: 1; }
 
 .barre-marque { width: 24px; height: 24px; display: block; flex: none; }
 
@@ -310,8 +347,36 @@ input[type="color"] {
 /* Élévation par filet : la fenêtre active porte le filet + la lisière primaire */
 .fenetre.active {
   border-color: var(--lisiere);
-  box-shadow: var(--lisiere-bande);  /* bande nette de 6 px, même couleur que le filet : §10.5 */
+  /* Bande + halo : §10.5. La bande seule est « de base » (§3), le halo est
+     l'exception — une seule fenêtre, un seul box-shadow. */
+  box-shadow: var(--lisiere-bande), var(--lisiere-halo);
 }
+
+/* Fenêtre inactive : voile d'aplat, pas de flou (§3). Reprend le style
+   « fenêtre inactive » de COSMIC — l'attention se lit aussi par écart. */
+.fenetre:not(.active)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--inactif);
+  pointer-events: none;
+}
+
+/* Mosaïque (§10.6) : la géométrie est pilotée par l'arbre de partages.
+   La transition ne s'applique qu'aux fenêtres tuilées — glisser une fenêtre
+   la fait sortir de l'arbre, donc aucune latence au pointermove. Seules la
+   position et la taille animent (§7). */
+.fenetre.en-mosaique {
+  transition: left   var(--dur-base) var(--easing),
+              top    var(--dur-base) var(--easing),
+              width  var(--dur-base) var(--easing),
+              height var(--dur-base) var(--easing);
+}
+/* Posée après, donc prioritaire : pendant qu'on tire un ratio ou une fenêtre,
+   la transition suivrait le pointeur et donnerait une impression de retard. */
+.fenetre.sans-transition { transition: none !important; }
+.fenetre.en-mosaique .fenetre-titre { cursor: grab; }
+.fenetre.en-mosaique.deplacee .fenetre-titre { cursor: grabbing; }
 
 .fenetre-titre {
   height: var(--hit);
@@ -363,6 +428,17 @@ input[type="color"] {
 
 .fenetre-bouton:hover { color: var(--text); background: var(--rule); }
 .fenetre-bouton[data-bouton="fermer"]:hover { color: var(--accent); }
+
+/* Icônes de contrôle : SVG, jamais des glyphes de police — ✕ (U+2715) et
+   ⤢ (U+2922) sont absents d'Inter comme de JetBrains Mono. */
+.fenetre-bouton svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
 
 .fenetre-poignee {
   width: 16px;

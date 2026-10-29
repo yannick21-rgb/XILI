@@ -61,7 +61,8 @@ C'est la section qui compte le plus, et la seule qui soit une contrainte
 | Opacité (transform + alpha) | oui, tant que peu de couches | oui | **de base** |
 | Animation de transform / opacité | oui, 60 fps si ≤ 2–3 couches | oui | **de base** |
 | Ombre portée douce, grand rayon | **non** à 60 fps | partiel | **différé** |
-| Lisière de la fenêtre active : **bande nette** (spread sans flou) | oui | oui | **de base** |
+| Lisière de la fenêtre active : **bande 2 px seule** (spread, sans flou) | oui | oui | **de base** |
+| Lisière : bande + **halo flou** de rayon court, **une seule fenêtre** | **non** | oui | **exception mesurée — §10.5** |
 | Flou gaussien / backdrop-filter | **non** | partiel | **différé** |
 | Translucidité en couches multiples | **non** | partiel | **différé** |
 | Matériaux, reflets, dégradés lourds | **non** | oui | **différé** |
@@ -229,10 +230,58 @@ XILI n'apparaît donc que dans la barre et les documents de marque.
 Deux faces, pas trois. La typographie est le principal vecteur d'identité
 (disposition, interlignage, graisse).
 
-| Rôle | Face | Détail |
+### 5.1 Les deux faces — décision 2026-10-29
+
+| Rôle | Face retenue | Mesure |
 |---|---|---|
-| Interface | sans-serif à œil bas, large x-height | style Inter / IBM Plex Sans |
-| Mono | monospace à bonne distinction `0/O`, `1/l/I` | style JetBrains Mono / IBM Plex Mono |
+| Interface | **Inter** | x-height **55 %**, accents français complets |
+| Mono | **JetBrains Mono** | x-height **55 %**, zéro pointé, `l` à patte, `I` à empattements |
+
+Binôme retenu par Jean Yannick le 2026-10-29, devant trois autres
+(`xili-design/specimen-typo.html`) : Inter + Plex Mono, Plex Sans + Plex Mono,
+Plex Sans + JetBrains Mono. Toutes étaient sous **SIL OFL** et couvraient les
+accents ; le critère décisif a été le **rendu réel en 12 px**, la taille de la
+barre haute et la plus utilisée du bureau.
+
+- **Pourquoi Inter plutôt que Plex Sans :** x-height 55 % contre 52 %. Mesuré
+  au rendu en 12 px, Inter reste ouvert là où Plex Sans se resserre. Le
+  principe 1 (« lisible avant joli ») tranche en faveur de la hauteur d'x.
+  Contre : Inter est la plus générique des candidates — c'est le prix assumé
+  d'une typo qui ne se remarque pas.
+- **Pourquoi JetBrains Mono plutôt que Plex Mono :** même x-height (55 % vs
+  52 %), 85 Ko de moins, et les glyphes critiques sont dans la source.
+- **Distinction `0/O`, `1/l/I`** : vérifiée au rendu pour les deux monos. Les
+  deux passaient ; c'est l'x-height qui a départagé.
+
+**Note de lisibilité :** « Œil bas » et « grande hauteur d'x » sont deux
+indications opposées. La phrase d'origine du §5 (« sans-serif à œil bas,
+large x-height ») était ambiguë — elle a été corrigée ici. La valeur retenue
+est **x-height haute**, et c'est elle qui a décidé du choix.
+
+### 5.2 Distribution
+
+| Fichier | Rôle | Poids |
+|---|---|---|
+| `assets/fonts/inter-latin.woff2` | interface, livré | 117 Ko |
+| `assets/fonts/jetbrainsmono-latin.woff2` | mono, livré | 46 Ko |
+| `assets/fonts/OFL-*.txt` | licences, livrées avec | — |
+| `xili-design/fonts-evaluation/*.ttf` | sources complètes, travail | 1,6 Mo |
+
+Sous-ensembles générés par `pyftsubset` : latin, latin-1 supplémentaire
+(accents français), latin étendu A (Œ œ), ponctuation générale, opérateurs
+mathématiques (`≡`), alphanumériques divers (`▸`, `◫`). Axes variables
+conservés (`opsz`, `wght` pour Inter ; `wght` pour JetBrains Mono).
+
+Licence : **SIL OFL 1.1** — redistribuable et embarquable. C'est ce qui a
+écarté **Lyl Bah Demo** (« Free For Personal Use », glyphe `0` filigrané) du
+reste du système : elle reste réservée au logotype.
+
+**Règle des glyphes :** une police n'a pas tous les signes. `✕` (U+2715) et
+`⤢` (U+2922) sont absents d'Inter, `≡` (U+2261) l'était de mon premier
+sous-ensemble. Toute **icône d'interface se dessine en SVG**, jamais en glyphe
+de police : c'est indépendant de la fonte, net à toute taille, et c'est
+exactement ce que le compositeur devra faire en J7. Le texte courant, lui, ne
+doit employer que des caractères présents dans les deux sous-ensembles.
 
 | Jeton | Valeur | Usage |
 |---|---|---|
@@ -255,11 +304,18 @@ Deux faces, pas trois. La typographie est le principal vecteur d'identité
 | Jeton | Valeur | Note |
 |---|---|---|
 | `radius-sm` | 4 px | contrôles, puces |
-| `radius-md` | 8 px | fenêtres, panneaux |
-| `radius-lg` | 12 px | modales, écrans |
+| `radius-md` | **12 px** | fenêtres, panneaux |
+| `radius-lg` | **20 px** | modales, écrans |
 | espacement | échelle 4 pt (4, 8, 12, 16, 24, 32, 48) | une seule échelle |
 | `hit` | 32 px minimum | cibles tactiles et souris |
 | élévation | 3 niveaux, portés par `rule` + léger décalage, **pas** par ombre | |
+
+Les trois rayons restent des multiples de 4, dans la même échelle que
+l'espacement. Ils ont été **ouverts le 2026-10-29** (8 / 12 → 12 / 20) sur le
+modèle de l'esthétique COSMIC/Pop!_OS : des fenêtres plus arrondies lisent
+comme des objets posés, pas comme des cadres. C'est un ajustement de
+caractère, pas un changement de système — le nombre de jetons n'a pas bougé,
+et les coins restent le seul ornement structurel.
 
 Les coins arrondis sont le seul ornement structurel du système. Ils sont
 cohérents parce qu'ils sont peu nombreux.
@@ -312,6 +368,8 @@ Ce sont les points qui bloquent, et ce qui les lèverait.
 | 4 | Faces typographiques exactes | **ouverte** — une maquette qui les montre côte à côte |
 | 5 | Statut de « sensation macOS » dans `ARCHITECTURE.md` §11 | **ouverte** — la section 3 : le reformuler ou l'abandonner explicitement |
 | 6 | Couleur d'accent définitive | **tranchée** (2026-10-28) : palette « Encre et soleil » (§4) — orange brûlé `#FF6B2C` en principal, safran `#FFC53D` en secondaire ; assombrissements clairs au §4.3 |
+| 7 | Rapport à l'esthétique Pop!_OS / COSMIC | **tranchée** (Jean Yannick, 2026-10-29) : on emprunte la **mosaïque automatique** (§10.6) et l'**esthétique** (coins arrondis ouverts, §6). **Palette conservée** — Encre et soleil ne bouge pas. Ni dock, ni panneau latéral, ni lanceur, ni contrôles en haut à droite |
+| 8 | Halo lumineux de la lisière | **tranchée** (2026-10-29) : flou réel au-dessus de la bande 2 px. Exception §3 **provisoire** — le coût llvmpipe ne se mesurera qu'à J7 (§10.5) |
 
 ---
 
@@ -371,25 +429,95 @@ Chaque fenêtre est **entourée d'une bande fine et lumineuse**, avec ces règle
 |---|---|
 | Portée | **fenêtre active uniquement** ; les autres gardent le filet `rule` |
 | Couleur | **libre** — sélecteur de couleur dans le menu XILI (exception §4) |
-| Épaisseur | filet **1 px** (uniforme avec les fenêtres inactives) + bande **6 px** = **7 px** de lecture. Le filet reste à 1 px au focus : passer à 2 px décalerait le contenu de 1 px à chaque changement de focus |
-| **Bande** | **6 px nets, sans flou** — `box-shadow` en `spread` pur, pas de rayon de flou. Un filet large, pas un glow |
+| Épaisseur | filet **1 px** (uniforme avec les fenêtres inactives) + bande **2 px** = **3 px** de lecture. Le filet reste à 1 px au focus : passer à 2 px décalerait le contenu de 1 px à chaque changement de focus |
+| **Bande** | **2 px nets, sans flou** — `box-shadow` en `spread` pur. C'est elle qui garde le bord lisible |
+| **Halo** | **lumineux, flou réel** — `box-shadow` de rayon court (14 px) sous la bande. Décision Jean Yannick, 2026-10-29 : « le halo doit être lumineux ». Une seule fenêtre porte le halo : la fenêtre active |
 | Mouvement | **statique** : la lisière apparaît/disparaît avec le focus, sans pulsation |
 
-Le filet de 2 px et la bande de 6 px sont de la **même couleur et contigus** :
-ils fusionnent en une seule bande de 8 px autour de la fenêtre active. C'est
-bien une bande, pas un contour suivi d'un halo.
+**Les deux coexistent** : la bande de 2 px donne l'arête nette, le halo donne
+la lumière. La bande seule est lisible mais morte ; le halo seul est lumineux
+mais flou au bord. Ensemble, l'arête reste nette et la lisière irradie.
+
+Le filet de 1 px et la bande de 2 px sont de la **même couleur et contigus** :
+ils fusionnent en une seule bande de 3 px autour de la fenêtre active, puis
+le halo s'essore au-delà.
 
 Justification : la lisière répond à la question « où est mon attention ? »
 mieux qu'un simple filet, et une seule fenêtre lumineuse à la fois reste
 « calme par défaut ». Le choix de la couleur est personnel : c'est la seule
 pièce du système qui échappe à la palette, et c'est assumé.
 
-Coût (§3) : **une bande sans flou est un aplat** — pas de passe de filtre, un
-quad de plus derrière la fenêtre, donc **dans le même registre qu'un filet**.
-Elle a remplacé un halo flou (rayon 6 px) qui, lui, coûtait une convolution ;
-la version à bande est strictement moins chère, et elle rejoint le langage
-écrit au §3 : « aplats, filets, typographie, mouvement ». Il n'y a donc plus
-de repli à prévoir sur ce point.
+**Coût (§3) — mesuré honnêtement.** La bande seule est un aplat, donc « de
+base ». **Le halo flou est une convolution** : il a été retiré de la ligne
+« de base » du tableau §3 et remis en **exception**, sur deux conditions qui
+sont aussi ses limites :
+
+1. **une seule fenêtre** à l'écran porte un halo — les fenêtres inactives ne
+   portent que leur filet `rule`, jamais de halo ;
+2. **un seul `box-shadow`**, pas une pile de couches.
+
+Le repli si le budget casse en réel est écrit ici : retirer le halo, garder
+la bande 2 px. La lisière reste lisible, elle perd juste la lumière.
+
+> **Limite de la mesure.** La maquette tourne dans un navigateur hôte, qui
+> accélère les `box-shadow` par le GPU. **Le coût réel en llvmpipe ne peut
+> pas être mesuré depuis ici** — il se mesure à J7, sous QEMU. Tant que cette
+> mesure n'existe pas, l'exception est **provisoire** et le repli (bande
+> seule) est considéré comme le comportement sûr. C'est écrit plutôt que
+> prétendu mesuré.
+
+---
+
+### 10.6 Mosaïque automatique (décision 2026-10-29)
+
+Reprise de la **signature de Pop!_OS / COSMIC** : les fenêtres s'emboîtent
+plutôt que de se chevaucher. C'est la seule pièce fonctionnelle empruntée — la
+disposition de l'écran (panneau, dock, lanceur) et les couleurs restent celles
+de XILI (§4, §10).
+
+#### Modèle : arbre de partages binaires
+
+Un nœud est soit un **partage** (orientation + ratio), soit une **feuille**
+(id de fenêtre). La racine couvre le bureau entier, marges comprises.
+
+| Opération | Effet |
+|---|---|
+| **Ouvrir** une fenêtre | on partage la feuille active en deux ; la nouvelle occupe la seconde moitié |
+| **Fermer** une fenêtre | la feuille disparaît ; le partage qui la contenait s'effondre sur sa sœur |
+| **Focus** directionnel | la fenêtre la plus proche dans cette direction (géométrique, centre à centre) |
+| **Échanger** directionnel | les deux fenêtres échangent leur place dans l'arbre |
+| **Tourner** | le partage courant passe de vertical à horizontal et inversement |
+| **Flottant** | une fenêtre peut sortir de l'arbre et redevenir libre (glisser, redimensionner) |
+
+Les ratios sont **égaux par défaut** (0.5) ; le redimensionnement au poignée
+agit sur le ratio du partage parent, pas sur la taille absolue de la fenêtre.
+
+#### Ce que la mosaïque ne change pas
+
+- La **barre haute** reste unique, et les **contrôles de fenêtre** restent en
+  bas à droite — ces décisions (§10) ne bougent pas.
+- Le **glisser** et le **redimensionnement** restent disponibles : ce sont eux
+  qui font sortir une fenêtre de l'arbre, en mode flottant.
+- La **lisière** ne change pas : une seule fenêtre active reste lumineuse.
+
+#### Raccourcis
+
+| Raccourci | Action |
+|---|---|
+| `Ctrl+Alt+M` | basculer la mosaïque |
+| `Ctrl+Alt+←→↑↓` | diriger le focus |
+| `Ctrl+Alt+Maj+←→↑↓` | échanger la fenêtre |
+| `Ctrl+Alt+R` | tourner le partage courant |
+| `Ctrl+Alt+G` | basculer flottant / mosaïque pour la fenêtre active |
+
+#### Pourquoi c'est là avant J7
+
+Le compositeur cible est un poste de travail où l'on regarde plusieurs choses
+à la fois. La mosaïque est la réponse structurelle à cette question, et la
+maquette sert à **la valider avant d'en payer le coût en noyau** : un
+gestionnaire de partages binaires est du calcul de géométrie pur, sans
+dépendance matérielle — c'est précisément le genre de chose qu'on veut tester
+en HTML avant de l'écrire en Rust.
 
 ---
 

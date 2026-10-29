@@ -262,10 +262,14 @@ décisions prises.
 - Demande de Jean Yannick : « je veux que cela soit une légère bande » pour
   le halo de la lisière. **Le halo flou est supprimé au profit d'une bande
   nette.**
-- Implémentation : `box-shadow` en **spread pur** — `0 0 0 6px`, rayon de
-  flou **0**. Vérifié en navigateur : `rgb(255,107,44) 0px 0px 0px 6px`.
+- Implémentation : `box-shadow` en **spread pur** — `0 0 0 2px`, rayon de
+  flou **0**. Vérifié en navigateur : `rgb(255,107,44) 0px 0px 0px 2px`.
   Variable renommée `--lisiere-halo` → `--lisiere-bande`, parce qu'elle ne
   désigne plus un halo.
+- **Épaisseur : 2 px**, fixée par Jean Yannick en deux temps — 6 px d'abord,
+  puis ramené à 2 px (« 2px ») après que j'ai signalé qu'une bande **pleine**
+  paraît plus épaisse qu'un flou de même rayon, qui s'essore. C'est ce qui
+  fait d'elle une **légère** bande.
 - **Le doc le disait déjà** : §10.5 s'ouvre sur « Chaque fenêtre est
   entourée d'une bande fine et lumineuse ». C'est l'implémentation qui
   dérivait — j'avais traduit « bande » par « glow ». Le code est réaligné sur
@@ -275,7 +279,7 @@ décisions prises.
   **« de base »** dans le tableau du §3, et le repli prévu (lisière sans
   halo) n'a plus lieu d'être. On retrouve le langage assumé du §3 :
   « aplats, filets, typographie, mouvement ».
-- Filet + bande sont de la même couleur et contigus : **1 px + 6 px = 7 px**
+- Filet + bande sont de la même couleur et contigus : **1 px + 2 px = 3 px**
   de lecture autour de la fenêtre active.
 - **Écart doc/code trouvé au passage** : §10.5 annonçait « Épaisseur 2 px »
   alors que le filet fait 1 px. Cause : la variable `--lisiere-epaisseur`
@@ -283,12 +287,14 @@ décisions prises.
   corrigé au 1 px réel. On garde 1 px uniforme entre fenêtres actives et
   inactives : passer à 2 px au focus décalerait le contenu de 1 px à chaque
   changement de focus.
-- Note ouverte : une bande de 6 px **pleine** paraît plus épaisse qu'un flou
-  de 6 px, qui s'essore. 6 px est conservé (nombre demandé explicitement) ;
-  si le rendu paraît trop lourd, c'est `--lisiere-bande`, un seul chiffre.
-- Non vérifié cette fois : **capture d'écran impossible** — le bureau de
-  session n'était pas visible. La vérification repose sur le style calculé
-  (`box-shadow` à 0 de flou) et l'absence d'erreur console.
+- **Vérifié à l'œil, les deux thèmes** (captures) : la lisière est un filet
+  net, sans halo diffus — une légère bande, comme demandé. Elle suit le
+  thème (`#FF6B2C` sombre, `#BF3900` clair). Style calculé :
+  `rgb(255,107,44) 0px 0px 0px 2px` — rayon de flou **0**. Zéro erreur
+  console.
+- À noter : le serveur de test était tombé entre-temps (HTTP 000), ce qui
+  avait rendu la page muette sans erreur console apparente — stylesheet non
+  chargée, aucune fenêtre. Relancé : `python3 -m http.server 8742`.
 
 ---
 
@@ -311,14 +317,31 @@ décisions prises.
 - `kernel/src/main.rs` : `mod io; mod pic; mod irq;`, `pic::init()` + `irq::init()`
   après l'IDT, `sti`, test J2.6b (boucle `hlt` attendant 3 ticks du timer).
 - `Makefile` : gates J2.6 ("PIC remape") et J2.6b ("timer IRQ active") ajoutés.
-- Bug identifié (non résolu) : `TICK_COUNT` vaut 18446744071563173920
-  (0xFFFFFFFF8010xxxx) — corruption du `static mut`. `handle_irq` est bien
-  appelé (trace "IRQ 0"), le timer tick (trace "B" = tick #1), mais la lecture
-  depuis `kernel_main` est corrompue. Cause probable : le `nomem` sur `outb`
-  permet au compilateur de réordonner les écritures PIC/PIT par rapport à `sti`
-  et aux `read_volatile`/`write_volatile`. Diagnostic en cours avec GDB.
-- Reste : corriger la corruption du compteur de ticks (sus : `nomem` sur `outb`),
-  valider `make test` (gate J2.6b échoue).
+|- Bug corrigé : corruption de TICK_COUNT. Cause racine — nomem sur outb dans io.rs : avec nomem, le compilateur réordonnait les écritures outb (programmation PIC/PIT) par rapport à sti et aux read_volatile/write_volatile. Sans nomem, l'asm devient une barrière mémoire compilateur : l'ordre PIC → PIT → sti est garanti. Le nomem a été retiré des primitives outb/inb (voir commentaire io.rs §1). TICK_COUNT passe maintenant 0 → 1 → 4 sur 3 ticks, make test valide J2.6b.
+|- Nettoyage : code debug (lecture d'adresse codée en dur) retiré de main.rs ; handle_timer() (dead code) réutilisé par handle_irq.
+||- Reste : rien — J2.6 + J2.6b validés, passage à J2.7 (planificateur).
+|
+|## 2026-10-29 — J2.6 : bug QEMU TCG `sti` interrupt-delivery race
+|
+|- **Bug** : la première lecture de `TICK_COUNT` après `sti` (sans instruction
+|  intermédiaire) renvoie 32 au lieu de 0 ou 1. La valeur 32 = numéro de
+|  vecteur du timer (IRQ 32), laissé dans RAX par le calcul EOI du handler
+|  (`0xF8 & vector = 0xF8 & 32 = 32`).
+|- **Cause** : QEMU TCG, quand un IRQ matériel est en attente au moment de
+|  `sti`, délivre l'interruption, exécute le handler (qui laisse RAX=32),
+|  puis `iretq` restitue le RIP. L'instruction `mov TICK_COUNT, %rax`
+|  immédiatement après `sti` n'est pas correctement ré-exécutée après
+|  l'interruption — QEMU TCG utilise la valeur de RAX du handler au lieu
+|  de relire la mémoire.
+|- **Diagnostiqué** : deux lectures consécutives → `t1=32 t2=1` (TICK_COUNT
+|  passe 32→1, impossible par incrément). Insertion de `nop` ou `hlt` entre
+|  `sti` et la lecture → `t1=1` (correct). Confirme que le `nop` force le
+|  pipeline à s'installer après l'interruption.
+|- **Correctif** : `asm!("sti"); asm!("nop")` au lieu de `asm!("sti")`.
+|  Le `nop` est une instruction réelle qui force le CPU à valider le pipeline
+|  post-interruption avant la prochaine lecture mémoire.
+|- **Vérifié** : `make test` (BIOS) et `make test-uefi` (ISO + ESP) passent.
+|  TICK_COUNT : 0 → 1 → 4 (3 ticks à 100 Hz).|**- Reste** : passer à J2.7 (planificateur).
 
 ---
 

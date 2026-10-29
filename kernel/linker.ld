@@ -72,9 +72,14 @@ SECTIONS
         *(.data .data.*)
     }
 
+    /* BSS — zero-fillé par le bootstrap (boot.s), PAS par GRUB.
+     * GRUB ne zère pas toujours le BSS des segments higher-half
+     * (p_vaddr != p_paddr) : on ne s'y fie pas. */
     .bss (NOLOAD) : AT(. - HIGHER_HALF) {
+        _bss_start = .;
         *(COMMON)
         *(.bss .bss.*)
+        _bss_end = .;
         _kend = .;         /* fin du noyau (image + BSS) : virtuel, en higher-half.
                              * L'allocateur physique le convertit en adresse
                              * physique de fin pour savoir quoi réserver. */

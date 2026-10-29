@@ -4,6 +4,18 @@
  * Le noyau est no_std et n'a pas de libstd. Les primitives de
  * port inb/outb sont donc définies ici, en assembleur inline,
  * et utilisées par le PIC, le clavier, le timer, etc.
+ *
+ * IMPORTANT : `nomem` est INTENTIONNELLEMENT ABSENT des options.
+ * Le `out`/`in` touche des ports d'E/S, pas de la mémoire, mais
+ * le compilateur ne le sait pas forcément et `nomem` lui dit que
+ * l'asm n'accède pas à la mémoire — ce qui permet de réordonder
+ * les read_volatile/write_volatile autour de l'appel. Or les
+ * séquences de programmation du PIC et du PIT doivent rester
+ * strictement ordonnées par rapport aux accès mémoire volatile
+ * (ex: tick counter, IDT). Sans `nomem`, l'asm est un bug
+ * mémoire invisible pour l'optimiseur, ce qui a corrompu
+ * TICK_COUNT en J2.6. `nostack` et `preserves_flags` suffisent
+ * et correctement, car l'asm touche DX/AL et rien d'autre.
  * ============================================================ */
 
 use core::arch::asm;
@@ -13,12 +25,14 @@ use core::arch::asm;
 pub fn outb(port: u16, value: u8) {
     // SAFETY: l'accès au port est un appel d'E/S privilégié ( CPL 0 ).
     // Seuls les pilotes matériels noyau appellent ceci, en mode noyau.
+    // Pas de `nomem` : l'asm doit rester une barrière mémoire pour
+    // empêcher la réordonnance des read/write_volatile autour du PIC/PIT.
     unsafe {
         asm!(
             "out dx, al",
             in("dx") port,
             in("al") value,
-            options(nomem, nostack, preserves_flags)
+            options(nostack, preserves_flags)
         );
     }
 }
@@ -32,7 +46,7 @@ pub fn inb(port: u16) -> u8 {
             "in al, dx",
             out("al") value,
             in("dx") port,
-            options(nomem, nostack, preserves_flags)
+            options(nostack, preserves_flags)
         );
     }
     value
@@ -47,7 +61,7 @@ pub fn outw(port: u16, value: u16) {
             "out dx, ax",
             in("dx") port,
             in("ax") value,
-            options(nomem, nostack, preserves_flags)
+            options(nostack, preserves_flags)
         );
     }
 }
@@ -62,7 +76,7 @@ pub fn inw(port: u16) -> u16 {
             "in ax, dx",
             out("ax") value,
             in("dx") port,
-            options(nomem, nostack, preserves_flags)
+            options(nostack, preserves_flags)
         );
     }
     value

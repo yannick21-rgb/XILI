@@ -63,10 +63,19 @@
     <header class="fenetre-titre"><span class="fenetre-nom"></span></header>
     <div class="fenetre-corps"></div>
     <footer class="fenetre-pied">
+      <!-- Contrôles en SVG, jamais en glyphes : ✕ (U+2715) et ⤢ (U+2922)
+           sont absents d'Inter et de JetBrains Mono. Une icône vectorielle
+           ne dépend d'aucune police et se porte telle quelle en J7. -->
       <div class="fenetre-controles">
-        <button class="fenetre-bouton" data-bouton="fermer" title="Fermer">✕</button>
-        <button class="fenetre-bouton" data-bouton="minimiser" title="Réduire">–</button>
-        <button class="fenetre-bouton" data-bouton="agrandir" title="Agrandir">⤢</button>
+        <button class="fenetre-bouton" data-bouton="fermer" title="Fermer" aria-label="Fermer">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2 L10 10 M10 2 L2 10"/></svg>
+        </button>
+        <button class="fenetre-bouton" data-bouton="minimiser" title="Réduire" aria-label="Réduire">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 9 L10 9"/></svg>
+        </button>
+        <button class="fenetre-bouton" data-bouton="agrandir" title="Agrandir" aria-label="Agrandir">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>
+        </button>
       </div>
       <div class="fenetre-poignee" title="Redimensionner"></div>
     </footer>

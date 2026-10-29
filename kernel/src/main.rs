@@ -131,7 +131,7 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
 
     // --- J2.5 : IDT / exceptions ---------------------------------
     //
-    // Le TSS (GDT enrichie) et l'IDT sont initialisés APRÈS le paging
+    // Le TSS (GDT enriché) et l'IDT sont initialisés APRÈS le paging
     // : le TSS pointe vers la pile courante (boot.s) et vers IST1
     // (une pile BSS) pour le #DF. L'IDT active les handlers #DF/#GP/#PF.
     //
@@ -187,24 +187,32 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
 
     // Activer les interruptions matérielles.
-    unsafe { asm!("sti") };
-
-    // --- J2.6b : test du timer ----------------------------------
     //
-    // On attend ~30 ms (3 ticks a 100 Hz) pour verifier que le
+    // NOTE: sous QEMU TCG, si le timer IRQ est déjà en attente quand
+    // sti s'exécute, le handler laisse RAX = 32 (numéro de vecteur,
+    // via le calcul EOI 0xF8 & vector = 32), et la lecture volatile
+    // immédiatement suivante renvoie 32 au lieu de la valeur de
+    // TICK_COUNT en mémoire. Un nop force le CPU à valider
+    // l'instruction avant la lecture de memoire.
+    // Ref: skill xili-project, Pitfalls (section QEMU TCG sti race).
+    unsafe { asm!("sti"); asm!("nop") };
+
+    // On attend ~30 ms (3 ticks à 100 Hz) pour vérifier que le
     // timer tick. On scrute le compteur dans une boucle hlt :
-    // chaque tick réveille le CPU, l'IRQ est traite, le compteur
-    // est incremente, puis on re-dort. Si le PIC/IDT/handler sont
-    // faut, le noyau triple-faulte ou reste bloque a 0 tick.
+    // chaque tick réveille le CPU, l'IRQ est traitée, le compteur
+    // est incrémenté, puis on re-dort. Si le PIC/IDT/handler sont
+    // faits, le noyau triple-faulte ou reste bloqué à 0 tick.
     let ticks_start = irq::ticks();
-    console::print(format_args!("ts={}\n", ticks_start));
+    console::print(format_args!(
+        "J2.6b: attente de {} ticks (debut={})...", 3, ticks_start
+    ));
     while irq::ticks() - ticks_start < 3 {
         unsafe { asm!("hlt") }
     }
     let ticks_end = irq::ticks();
     console::print(format_args!("te={}\n", ticks_end));
     console::print(format_args!(
-        "J2.6b: timer IRQ active (ticks {} -> {})\n",
+        "J2.6b: timer IRQ active (ticks {} -> {})",
         ticks_start, ticks_end
     ));
     // ----------------------------------------------------------

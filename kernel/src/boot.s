@@ -176,6 +176,17 @@ long_mode_start:
 
     fninit
 
+    /* --- zero BSS (le noyau ne s'appuie pas sur GRUB pour cela) ---
+     * GRUB ne zère pas toujours le BSS des segments higher-half
+     * (p_vaddr != p_paddr). On zère soi-même : TICK_COUNT, IDT, TSS,
+     * IST1 stack, LAST_SCANCODE, KEY_COUNT — tout le .bss. */
+    movabs $_bss_start, %rax
+    movabs $_bss_end, %rdx
+1:  movq $0, (%rax)
+    add $8, %rax
+    cmp %rdx, %rax
+    jb 1b
+
     /* --- appeler kernel_main, liée en higher-half (> 4 GiB) ---
      * Un `call rel32` ne peut pas couvrir l'écart entre le bootstrap
      * (bas, < 4 GiB) et le noyau (higher-half, > 4 GiB) : on charge

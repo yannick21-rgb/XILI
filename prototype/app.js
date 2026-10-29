@@ -90,10 +90,12 @@ function ouvrirFenetre(titre, contenu, opts = {}) {
   el.classList.add("ouverte");
   el.addEventListener("animationend", () => el.classList.remove("ouverte"), { once: true });
 
-  fenetres.set(id, { el, corps, titre, maximisee: false, minimisee: false, geo: null });
+  fenetres.set(id, { el, corps, titre, maximisee: false, minimisee: false,
+                     flottante: false, geo: null });
   bureau.appendChild(el);
   installerFenetre(id);
   focusFenetre(id);
+  if (mosaiqueActivee) { mosaiqueAjouter(id); appliquerMosaique(); }
   majBarreTaches();
   return id;
 }
@@ -117,6 +119,7 @@ function fermerFenetre(id) {
   if (!f) return;
   fenetres.delete(id);
   f.el.remove();
+  if (mosaiqueActivee) { mosaiqueRetirer(id); appliquerMosaique(); }
   if (idActif === id) {
     idActif = null;
     const restantes = [...fenetres.keys()];
@@ -184,9 +187,21 @@ function installerFenetre(id) {
   titre.addEventListener("pointerdown", (e) => {
     if (f.maximisee) return;
     e.preventDefault();
+
+    // Une fenêtre tuilée qu'on tire sort de l'arbre (§10.6) : elle redevient
+    // flottante à l'endroit où on la lâche. C'est le geste naturel pour
+    // « celle-là, je veux la déplacer ailleurs ».
+    if (el.classList.contains("en-mosaique")) {
+      f.flottante = true;
+      el.classList.remove("en-mosaique");
+      mosaiqueRetirer(id);
+      appliquerMosaique();
+    }
+
     const startX = e.clientX, startY = e.clientY;
     const origL = el.offsetLeft, origT = el.offsetTop;
     titre.setPointerCapture(e.pointerId);
+    el.classList.add("deplacee", "sans-transition");
 
     const bouger = (ev) => {
       el.style.left = Math.max(-el.offsetWidth + 64,
@@ -197,6 +212,7 @@ function installerFenetre(id) {
     const relacher = () => {
       titre.removeEventListener("pointermove", bouger);
       titre.removeEventListener("pointerup", relacher);
+      el.classList.remove("deplacee", "sans-transition");
     };
     titre.addEventListener("pointermove", bouger);
     titre.addEventListener("pointerup", relacher);
@@ -208,6 +224,43 @@ function installerFenetre(id) {
     e.preventDefault();
     e.stopPropagation();
     focusFenetre(id);
+
+    // En mosaïque, la poignée agit sur le ratio du partage parent :
+    // on redimensionne le partage, pas la fenêtre (§10.6).
+    const trouv = mosaiqueActivee ? trouverFeuille(racineMosaique, id) : null;
+    const partage = trouv && trouv.parent ? trouv.parent : null;
+
+    if (partage) {
+      const r = calculerRects(racineMosaique, rectRacineMosaique(), new Map()).get(id);
+      const horizontal = partage.or === "h";
+      const dimension = horizontal ? r.w : r.h;
+      const origRatio = partage.ratio;
+      const startX = e.clientX, startY = e.clientY;
+      const delta = () => horizontal
+        ? (e.clientX - startX) / dimension
+        : (e.clientY - startY) / dimension;
+      void delta; // (début de geste : aucun mouvement encore)
+
+      poignee.setPointerCapture(e.pointerId);
+      el.classList.add("sans-transition");   // sinon la transition suit le pointeur
+
+      const bouger = (ev) => {
+        const d = horizontal ? (ev.clientX - startX) / dimension
+                             : (ev.clientY - startY) / dimension;
+        partage.ratio = Math.max(0.15, Math.min(0.85, origRatio + d));
+        appliquerMosaique();
+      };
+      const relacher = () => {
+        poignee.removeEventListener("pointermove", bouger);
+        poignee.removeEventListener("pointerup", relacher);
+        el.classList.remove("sans-transition");
+      };
+      poignee.addEventListener("pointermove", bouger);
+      poignee.addEventListener("pointerup", relacher);
+      return;
+    }
+
+    // Mode flottant : largeur / hauteur libres (comportement historique).
     const startX = e.clientX, startY = e.clientY;
     const origW = el.offsetWidth, origH = el.offsetHeight;
     poignee.setPointerCapture(e.pointerId);
@@ -223,6 +276,211 @@ function installerFenetre(id) {
     poignee.addEventListener("pointermove", bouger);
     poignee.addEventListener("pointerup", relacher);
   });
+}
+
+/* --- Mosaïque automatique (§10.6) ------------------------------------------- */
+
+let mosaiqueActivee = false;
+let racineMosaique = null;
+
+const MARGE_MOSAIQUE = 12;   // écart extérieur, par rapport au bord du bureau
+const ECART_MOSAIQUE = 8;    // écart intérieur, entre deux fenêtres tuilées
+
+/* Nœud : { type: "partage", or: "h"|"v", ratio, enfants: [a, b] }
+          | { type: "feuille", id } */
+
+function feuillesMosaique(n) {
+  if (!n) return [];
+  if (n.type === "feuille") return [n.id];
+  return [...feuillesMosaique(n.enfants[0]), ...feuillesMosaique(n.enfants[1])];
+}
+
+function trouverFeuille(n, id, parent = null) {
+  if (!n) return null;
+  if (n.type === "feuille") return n.id === id ? { noeud: n, parent } : null;
+  return trouverFeuille(n.enfants[0], id, n) || trouverFeuille(n.enfants[1], id, n);
+}
+
+/* Le nouvel onglet partage la feuille de la fenêtre active. L'orientation
+   s'inverse à chaque niveau — on obtient une grille, pas une colonne. */
+function mosaiqueAjouter(id) {
+  const presente = feuillesMosaique(racineMosaique);
+  if (presente.includes(id)) return;
+
+  if (!racineMosaique) { racineMosaique = { type: "feuille", id }; return; }
+
+  const cible = trouverFeuille(racineMosaique, idActif) ||
+                trouverFeuille(racineMosaique, presente[presente.length - 1]);
+  const or = cible && cible.parent ? (cible.parent.or === "h" ? "v" : "h") : "h";
+
+  const partage = { type: "partage", or, ratio: 0.5,
+                    enfants: [{ ...cible.noeud }, { type: "feuille", id }] };
+  remplacerNoeud(racineMosaique, cible.noeud, partage, null);
+}
+
+/* Remplace `ancien` par `nouveau` dans l'arbre ; si l'ancien était la
+   racine, la racine elle-même change. */
+function remplacerNoeud(n, ancien, nouveau, parent) {
+  if (!n) return false;
+  if (n === ancien) {
+    if (parent) {
+      const i = parent.enfants.indexOf(n);
+      parent.enfants[i] = nouveau;
+    } else {
+      racineMosaique = nouveau;
+    }
+    return true;
+  }
+  if (n.type === "partage") {
+    return remplacerNoeud(n.enfants[0], ancien, nouveau, n) ||
+           remplacerNoeud(n.enfants[1], ancien, nouveau, n);
+  }
+  return false;
+}
+
+function mosaiqueRetirer(id) {
+  const trouv = trouverFeuille(racineMosaique, id);
+  if (!trouv) return;
+  const { noeud, parent } = trouv;
+  if (!parent) { racineMosaique = null; return; }
+
+  const reste = parent.enfants[0] === noeud ? parent.enfants[1] : parent.enfants[0];
+  // Le partage s'effondre sur sa sœur (§10.6).
+  remplacerNoeud(racineMosaique, parent, reste, null);
+}
+
+function centreFenetre(f) {
+  const r = f.el.getBoundingClientRect(), b = bureau.getBoundingClientRect();
+  return { x: r.left - b.left + r.width / 2, y: r.top - b.top + r.height / 2 };
+}
+
+function voisineDirection(dir) {
+  const courante = fenetres.get(idActif);
+  if (!courante || courante.minimisee) return null;
+  const c = centreFenetre(courante);
+  let meilleur = null, meilleurScore = Infinity;
+
+  for (const [id, f] of fenetres) {
+    if (id === idActif || f.minimisee) continue;
+    const o = centreFenetre(f);
+    const dx = o.x - c.x, dy = o.y - c.y;
+    let dansLaDirection = false, dist = 0;
+
+    if (dir === "gauche" && dx < -1) { dansLaDirection = true; dist = Math.abs(dx) + Math.abs(dy) * 2; }
+    if (dir === "droite" && dx > 1)  { dansLaDirection = true; dist = Math.abs(dx) + Math.abs(dy) * 2; }
+    if (dir === "haut"   && dy < -1) { dansLaDirection = true; dist = Math.abs(dy) + Math.abs(dx) * 2; }
+    if (dir === "bas"    && dy > 1)  { dansLaDirection = true; dist = Math.abs(dy) + Math.abs(dx) * 2; }
+
+    if (dansLaDirection && dist < meilleurScore) { meilleurScore = dist; meilleur = id; }
+  }
+  return meilleur;
+}
+
+function focusDirection(dir) {
+  const id = voisineDirection(dir);
+  if (id !== null) focusFenetre(id);
+}
+
+function echangerDirection(dir) {
+  if (!mosaiqueActivee) return;
+  const cible = voisineDirection(dir);
+  if (cible === null) return;
+  const a = trouverFeuille(racineMosaique, idActif);
+  const b = trouverFeuille(racineMosaique, cible);
+  if (!a || !b) return;
+  const tmp = a.noeud.id;
+  a.noeud.id = b.noeud.id;
+  b.noeud.id = tmp;
+  appliquerMosaique();
+  focusFenetre(cible);
+}
+
+function tournerPartage() {
+  if (!mosaiqueActivee) return;
+  const trouv = trouverFeuille(racineMosaique, idActif);
+  if (!trouv) return;
+  const partage = trouv.parent || racineMosaique;
+  if (!partage || partage.type !== "partage") return;
+  partage.or = partage.or === "h" ? "v" : "h";
+  appliquerMosaique();
+}
+
+function rectRacineMosaique() {
+  const m = MARGE_MOSAIQUE;
+  return { x: m, y: m,
+           w: bureau.clientWidth - 2 * m,
+           h: bureau.clientHeight - 2 * m };
+}
+
+function calculerRects(n, r, out) {
+  if (!n) return out;
+  if (n.type === "feuille") { out.set(n.id, r); return out; }
+
+  const [gauche, droite] = n.enfants;
+  if (n.or === "h") {
+    const coupe = Math.round(r.w * n.ratio);
+    calculerRects(gauche, { x: r.x, y: r.y, w: coupe - ECART_MOSAIQUE / 2, h: r.h }, out);
+    calculerRects(droite, { x: r.x + coupe + ECART_MOSAIQUE / 2, y: r.y,
+                            w: r.w - coupe - ECART_MOSAIQUE / 2, h: r.h }, out);
+  } else {
+    const coupe = Math.round(r.h * n.ratio);
+    calculerRects(gauche, { x: r.x, y: r.y, w: r.w, h: coupe - ECART_MOSAIQUE / 2 }, out);
+    calculerRects(droite, { x: r.x, y: r.y + coupe + ECART_MOSAIQUE / 2,
+                            w: r.w, h: r.h - coupe - ECART_MOSAIQUE / 2 }, out);
+  }
+  return out;
+}
+
+function appliquerMosaique() {
+  if (!mosaiqueActivee) return;
+  const rects = calculerRects(racineMosaique, rectRacineMosaique(), new Map());
+  for (const [id, r] of rects) {
+    const f = fenetres.get(id);
+    if (!f) continue;
+    Object.assign(f.el.style, {
+      left: r.x + "px", top: r.y + "px",
+      width: r.w + "px", height: r.h + "px",
+    });
+    f.el.classList.add("en-mosaique");
+  }
+}
+
+/* Bascule globale : les fenêtres ouvertes entrent dans l'arbre, dans l'ordre
+   de création. Éteindre les libère à l'endroit où elles sont. */
+function basculerMosaique(force) {
+  const suivant = typeof force === "boolean" ? force : !mosaiqueActivee;
+  if (suivant === mosaiqueActivee) return;
+  mosaiqueActivee = suivant;
+
+  if (mosaiqueActivee) {
+    racineMosaique = null;
+    for (const [id, f] of fenetres) {
+      if (f.flottante) continue;
+      mosaiqueAjouter(id);
+    }
+    appliquerMosaique();
+  } else {
+    for (const [, f] of fenetres) f.el.classList.remove("en-mosaique");
+    racineMosaique = null;
+  }
+  majIndicateurMosaique();
+}
+
+/* Flottant / mosaïque, fenêtre par fenêtre (§10.6) */
+function basculerFlottante(id) {
+  const f = fenetres.get(id);
+  if (!f) return;
+  f.flottante = !f.flottante;
+
+  if (f.flottante) {
+    f.el.classList.remove("en-mosaique");
+    mosaiqueRetirer(id);
+    appliquerMosaique();
+  } else if (mosaiqueActivee) {
+    mosaiqueAjouter(id);
+    appliquerMosaique();
+  }
+  focusFenetre(id);
 }
 
 /* --- Barre des tâches (centre de la barre haute) -------------------------------- */

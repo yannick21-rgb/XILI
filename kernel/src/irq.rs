@@ -79,9 +79,8 @@ unsafe fn init_timer() {
 ///
 /// Incrémente le tick counter. Le PIT tourne à ~100 Hz.
 fn handle_timer() {
+    crate::serial::write_byte(b'T');
     tick();
-    let t = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TICK_COUNT)) };
-    crate::serial::write_byte(b'A' + (t.min(9) as u8));
 }
 
 /// Handler clavier (IRQ 1, vecteur 33).
@@ -114,7 +113,9 @@ pub extern "C" fn handle_irq(frame: *const ExceptionFrame) {
     match f.vector {
         32 => handle_timer(),
         33 => handle_keyboard(),
-        _ => {}
+        _ => {
+            crate::serial::write_byte(b'?');
+        }
     }
 
     // EOI : le IRQ est vector - 32 (remappage PIC).

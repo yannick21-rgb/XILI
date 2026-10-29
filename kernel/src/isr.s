@@ -88,10 +88,12 @@ NOERR 31  /* 31 (reserved)                    */
 
 # --- Point commun IRQ : appelle handle_irq, puis iretq ---
 # Entrée : rsp → [vector][error_code][rip][cs][rflags]
-# Après handle_irq : add $16, %rsp (retirer vector+error_code), iretq
+# handle_irq retourne dans rax le RSP de la prochaine tâche
+# (switch contextuel) → mov %rax, %rsp, add $16, iretq
 irq_common:
     mov %rsp, %rdi            # rdi = &frame
-    call handle_irq
+    call handle_irq           # rax = next_rsp (switch ou non)
+    mov %rax, %rsp            # switch de pile vers la prochaine tâche
     add $16, %rsp             # retirer vector + error_code factice
     iretq
 

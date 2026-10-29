@@ -345,12 +345,30 @@ décisions prises.
 
 ---
 
-```
-## AAAA-MM-JJ — JX : titre
+## 2026-10-29 — J2.7 : planificateur round-robin
 
-- Ce qui a été fait.
-- Ce qui a été vérifié (commande + résultat).
-- Décisions prises.
-- Ce qui reste.
-- Risques / dette.
+- Création de `task.rs` : struct `Task` (pile 16 Kio + `saved_rsp`),
+  `TASKS[8]`, `CURRENT`, `NUM_TASKS`, `init_main()`, `create_task()`,
+  `schedule()`. Round-robin simple : au tick du timer, switch vers la
+  tâche suivante.
+- `handle_irq` (irq.rs) : signature `-> u64`, retourne le RSP de la
+  prochaine tâche. Sur le timer (vecteur 32), appelle `schedule()`
+  avant de renvoyer. Sur les autres IRQ, renvoie le RSP courant (pas
+  de switch).
+- `irq_common` (isr.s) : `mov %rax, %rsp` entre `call handle_irq` et
+  `add $16` — charge le RSP renvoyé par handle_irq, donc le RSP de la
+  prochaine tâche. `iretq` restaure le contexte suivant.
+  - Le noyau principal (tâche 0) garde son rôle de "scheduler idle".
+  Deux workers (tâches 1 et 2) écrivent `'W'` et `'V'` sur la série
+  à chaque réveil, le timer écrit `'T'`. L'alternance `TW TV …`
+  prouve la rotation 3-way (kernel → W → V → kernel).
+  Vérifié : `make test` (BIOS) et `make test-uefi` (ISO + ESP) passent.
+  Log série montre `TWTJ2.6b…TWTTWTte=6` puis `TWTVTJ2.7b:`.
+
+- Reste : passer à J2.8 (priorités, tâches temps réel, ou SMP).
+- Risques : le switch de pile n'inclut pas encore les GPRs — les
+  tâches partagent les registres généraux entre elles. Un vrai
+  scheduler sauvegarde/restaure tous les registres (processus
+  complet) — pas nécessaire pour le round-robin simple actuel car
+  chaque tâche reprend sur son propre `iretq`, mais reste une limite.
 ```

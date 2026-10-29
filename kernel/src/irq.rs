@@ -107,7 +107,7 @@ fn handle_keyboard() {
 /// au PIC, puis retourne. Le stub ASM fait `iretq` pour reprendre
 /// l'exécution interrompue.
 #[no_mangle]
-pub extern "C" fn handle_irq(frame: *const ExceptionFrame) {
+pub extern "C" fn handle_irq(frame: *const ExceptionFrame) -> u64 {
     let f = unsafe { &*frame };
 
     match f.vector {
@@ -120,6 +120,16 @@ pub extern "C" fn handle_irq(frame: *const ExceptionFrame) {
 
     // EOI : le IRQ est vector - 32 (remappage PIC).
     pic::eoi((f.vector - 32) as u8);
+
+    // J2.7 : sur le timer (vecteur 32), on planifie la prochaine tâche.
+    // handle_irq retourne le RSP de la tâche suivante — irq_common
+    // charge ce RSP et fait iretq, restaurant le contexte suivant.
+    // Pour les autres IRQ, on renvoie le RSP courant (pas de switch).
+    if f.vector == 32 {
+        return unsafe { crate::task::schedule(frame as u64) };
+    }
+
+    frame as u64
 }
 
 /* ------------------------------------------------------------

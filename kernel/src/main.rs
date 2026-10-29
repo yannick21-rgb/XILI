@@ -13,6 +13,7 @@ mod mm;
 mod pic;
 mod runtime;
 mod serial;
+mod task;
 mod tss;
 mod vga;
 
@@ -34,6 +35,26 @@ const J23_MARKER: &str = "J2.3: tables de pages 4 niveaux, identity + higher-hal
 /// Statique ancré en higher-half : son adresse de lien sert de preuve
 /// que le noyau s'exécute au-delà de HIGHER_HALF (voir J2.3b dans main).
 static LINK_GUARD: u64 = 0x5AA5_5AA5_5AA5_5AA5;
+
+/// Tâche worker (J2.7) : boucle passive, réveillée par le timer à
+/// chaque tick. Son alternance avec le noyau principal prouve que
+/// le planificateur fonctionne.
+extern "C" fn worker_task() -> ! {
+    loop {
+        crate::serial::write_byte(b'W');
+        unsafe { asm!("hlt") }
+    }
+}
+
+/// Tâche worker secondaire (J2.7) : identique au premier mais écrite
+/// avec 'V' pour distinguer la rotation. L'alternance T/W/V/T/W/V/…
+/// prouve que le round-robin tourne sur trois tâches.
+extern "C" fn worker_task_2() -> ! {
+    loop {
+        crate::serial::write_byte(b'V');
+        unsafe { asm!("hlt") }
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
@@ -70,9 +91,6 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
             ));
         }
         None => {
-            // GRUB 2.12 émet un tag MEMORY_INFO de 9 octets au lieu des 16
-            // de la spec : les deux champs sont absents. On le dit plutôt
-            // que d'afficher du remplissage.
             console::print(format_args!(
                 "tag 1 mem_lower : absent (taille de tag non conforme)\n"
             ));
@@ -131,7 +149,7 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
 
     // --- J2.5 : IDT / exceptions ---------------------------------
     //
-    // Le TSS (GDT enriché) et l'IDT sont initialisés APRÈS le paging
+    // Le TSS (GDT enrichi) et l'IDT sont initialisés APRÈS le paging
     // : le TSS pointe vers la pile courante (boot.s) et vers IST1
     // (une pile BSS) pour le #DF. L'IDT active les handlers #DF/#GP/#PF.
     //
@@ -148,12 +166,14 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
 
     // --- J2.4 : allocateur physique bitmap --------------------------------
     //
-    // Le bitmap est construit à partir de la carte Multiboot2, puis testé
-    // en boucle : 100 Mio de pages sont allouées puis libérées ; le compteur
-    // de pages libres doit revenir exactement à la valeur initiale.
+    // Le bitmap est construit à partir de la carte MBI, puis testé
+    // en boucle : 100 Mio de pages sont allouées puis libérées ; le
+    // compteur de pages libres doit revenir exactement à la valeur
+    // initiale.
     //
-    // L'allocateur n'est pas appelé depuis les IRQ (AI-WORKFLOW §6) : il
-    // n'y a pas encore d'interruptions, et l'allocation reste sédentaire.
+    // L'allocateur n'est pas appelé depuis les IRQ (AI-WORKFLOW §6) :
+    // il n'y a pas encore d'interruptions, et l'allocation reste
+    // sédentaire.
     unsafe { mm::phys::init(mbi) };
     let free0 = mm::phys::free_pages();
     let used0 = mm::phys::used_pages();
@@ -177,13 +197,26 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     // --- J2.6 : PIC + timer + clavier --------------------------
     //
     // Après l'IDT (J2.5), on remappe le PIC 8259 vers les vecteurs
-    // 32..47, Programme le PIT a 100 Hz, et active IRQ 0 (timer)
-    // et IRQ 1 (clavier). Le test verifie que le timer tick
-    // bien (compteur incremente) — preuve que le chemin IRQ →
+    // 32..47, programme le PIT à 100 Hz, et active IRQ 0 (timer)
+    // et IRQ 1 (clavier). Le test vérifie que le timer tick
+    // bien (compteur incrémenté) — preuve que le chemin IRQ →
     // IDT → stub ASM → handle_irq → iretq est fonctionnel.
     unsafe { irq::init() };
     console::print(format_args!(
         "J2.6: PIC remappe (IRQ 32-47), timer 100 Hz + clavier actifs.\n"
+    ));
+
+    // --- J2.7 : création de la tâche worker (planificateur) ----
+    //
+    // Avant d'activer les interruptions, on crée une tâche secondaire.
+    // Le noyau principal (tâche 0) et le worker (tâche 1) seront
+    // alternés par le timer à 100 Hz via schedule() dans handle_irq.
+    unsafe { task::init_main() };
+    let worker_id = unsafe { task::create_task(worker_task) };
+    let worker2_id = unsafe { task::create_task(worker_task_2) };
+    console::print(format_args!(
+        "J2.7: planificateur round-robin (tache 0=noyau, {}=worker1, {}=worker2)\n",
+        worker_id, worker2_id
     ));
 
     // Activer les interruptions matérielles.
@@ -193,8 +226,8 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     // via le calcul EOI 0xF8 & vector = 32), et la lecture volatile
     // immédiatement suivante renvoie 32 au lieu de la valeur de
     // TICK_COUNT en mémoire. Un nop force le CPU à valider
-    // l'instruction avant la lecture de memoire.
-    // Ref: skill xili-project, Pitfalls (section QEMU TCG sti race).
+    // l'instruction avant la lecture de mémoire.
+    // Ref: skill xili-project, Pitfalls (QEMU TCG sti race).
     unsafe { asm!("sti"); asm!("nop") };
 
     // On attend ~30 ms (3 ticks à 100 Hz) pour vérifier que le
@@ -217,7 +250,18 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
     // ----------------------------------------------------------
 
-    // --- J2.5b : test du #PF -------------------------------------
+    // --- J2.7b : preuve du planificateur -----------------------
+    //
+    // Le worker a tourné pendant J2.6b : le caractère 'W' doit
+    // apparaître sur la voie série (alternance T/W = context switch).
+    // On attend 2 ticks supplémentaires pour forcer au moins un
+    // passage dans le worker.
+    let t7 = irq::ticks();
+    while irq::ticks() - t7 < 4 {
+        unsafe { asm!("hlt") }
+    }
+    console::print(format_args!("J2.7b: planificateur actif (worker execute).\n"));
+    // ----------------------------------------------------------
     //
     // Accès volontaire à une adresse non mappée (0xDEAD0000 :
     // ni dans l'identity map 0..1 Gio, ni dans le higher-half).

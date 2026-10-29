@@ -81,6 +81,10 @@ run-esp: esp
 # J2.3b exige en plus que le noyau s'exécute en higher-half : l'adresse de
 # lien d'un symbole (LINK_GUARD) est > HIGHER_HALF, et la lecture de sa
 # valeur par l'adresse virtuelle réussit (sinon #PF avant l'impression).
+#
+# J2.7 (planificateur) : le worker s'exécute entre deux ticks — le
+# caractère 'W' apparaît sur la voie série entre deux 'T' consécutifs,
+# preuve d'un context switch.
 test: iso
 	@timeout 20 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
@@ -92,7 +96,10 @@ test: iso
 	  && grep -q "cr2" $(LOG) \
 	  && grep -q "J2.6: PIC remappe" $(LOG) \
 	  && grep -q "J2.6b: timer IRQ active" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.6 + J2.6b)" \
+	  && grep -q "J2.7: planificateur" $(LOG) \
+	  && grep -q "J2.7b: planificateur actif" $(LOG) \
+	  && grep "TW" $(LOG) >/dev/null \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.6 + J2.6b + J2.7 + J2.7b)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
@@ -107,14 +114,20 @@ test-uefi: iso-uefi esp
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
 	  && grep -q "higher-half : OK" $(UEFI_LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4)" \
+	  && grep -q "J2.7: planificateur" $(UEFI_LOG) \
+	  && grep -q "J2.7b: planificateur actif" $(UEFI_LOG) \
+	  && grep "TW" $(UEFI_LOG) >/dev/null \
+	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b)" \
 	  || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
 	  && grep -q "higher-half : OK" $(UEFI_LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4)" \
+	  && grep -q "J2.7: planificateur" $(UEFI_LOG) \
+	  && grep -q "J2.7b: planificateur actif" $(UEFI_LOG) \
+	  && grep "TW" $(UEFI_LOG) >/dev/null \
+	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b)" \
 	  || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:

@@ -82,7 +82,10 @@ J1: noyau charge, mode long actif, console OK.
    2 Mio, une page de 4 Kio, CR3 chargé et vérifié. **Le noyau n'est pas
    encore relié en higher-half** — il tourne à 1 Mio.
 4. Allocateur physique bitmap (puis buddy).
-5. Allocateur noyau slab (`kmalloc`/`kfree`).
+5. ~~Allocateur noyau slab (`kmalloc`/`kfree`).~~ **Fait** : free-list first-fit avec
+   expansion par pages du physical allocator. 8 pages (32 Kio) réservées à l'init.
+   Test J2.5c : allocation/libération de blocs de 32/64/128/256 octets, vérification
+   de l'alignement (16), non-chevauchement, réutilisation après free.
 6. `mmap`/`munmap`/`mprotect` côté noyau (sans userland).
 7. ~~GDT/TSS par CPU, IDT, exceptions (`#PF`, `#GP`, `#DF`), panic handler propre.~~ **Fait** :
    GDT enrichie (code 0x08, données 0x10, TSS 0x18), TSS 64 bits avec

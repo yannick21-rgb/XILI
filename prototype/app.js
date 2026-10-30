@@ -510,6 +510,104 @@ function majIndicateurMosaique() {
 boutonMosaique.addEventListener("click", () => basculerMosaique());
 majIndicateurMosaique();
 
+/* --- Indicateurs système (§10.7) --------------------------------------------------- */
+
+/* Clé documentée au §10.7 : le compositeur J7 aura le même besoin, simulé
+   ou réellement lu. */
+const CLE_SYSTEME = "xili.etat-systeme";
+
+const DEFAUTS_SYST = { volume: 65, sonCoupe: false, wifi: true, batterie: 78, luminosite: 100 };
+
+const etatSyst = chargerEtatSyst();
+
+function chargerEtatSyst() {
+  try {
+    const sauvegardé = JSON.parse(localStorage.getItem(CLE_SYSTEME) || "{}");
+    return { ...DEFAUTS_SYST, ...sauvegardé };
+  } catch { return { ...DEFAUTS_SYST }; }
+}
+
+const boutonSysteme = $("#bouton-systeme");
+const popoverSysteme = $("#popover-systeme");
+const voileLuminosite = $("#voile-luminosite");
+const pourcentLuminosite = $("#pourcent-luminosite");
+const pourcentBatterie = $("#pourcent-batterie");
+const pourcentBatteriePop = $("#pourcent-batterie-pop");
+const ctlVolume = $("#ctl-volume");
+const ctlBatterie = $("#ctl-batterie");
+const ctlLuminosite = $("#ctl-luminosite");
+const ctlSonCoupe = $("#ctl-son-coupe");
+const ctlWifi = $("#ctl-wifi");
+
+function majSysteme() {
+  boutonSysteme.dataset.coupe = String(etatSyst.sonCoupe);
+  boutonSysteme.dataset.wifi = String(etatSyst.wifi);
+
+  // Icône batterie : le niveau est un aplat, largeur proportionnelle.
+  $("#icone-batterie .niveau").setAttribute("width", String(Math.max(0, Math.round(7 * etatSyst.batterie / 100))));
+  pourcentBatterie.textContent = etatSyst.batterie + "%";
+  pourcentBatteriePop.textContent = etatSyst.batterie + " %";
+
+  // Alertes au primary seulement : sur l'icône concernée, pas le cluster.
+  $("#icone-volume").classList.toggle("alerte", etatSyst.sonCoupe);
+  $("#icone-wifi").classList.toggle("alerte", !etatSyst.wifi);
+  $("#icone-batterie").classList.toggle("alerte", etatSyst.batterie < 20);
+  pourcentBatterie.classList.toggle("alerte", etatSyst.batterie < 20);
+
+  // Popover en phase avec l'état.
+  ctlVolume.value = etatSyst.volume;
+  ctlBatterie.value = etatSyst.batterie;
+  ctlLuminosite.value = etatSyst.luminosite;
+  ctlSonCoupe.setAttribute("aria-pressed", String(etatSyst.sonCoupe));
+  ctlWifi.textContent = etatSyst.wifi ? "connecté" : "hors réseau";
+  ctlWifi.setAttribute("aria-pressed", String(!etatSyst.wifi));
+
+  // Voile de luminosité : aplat, opacité inverse du réglage.
+  voileLuminosite.style.opacity = String(1 - etatSyst.luminosite / 100);
+  pourcentLuminosite.textContent = etatSyst.luminosite + " %";
+
+  try { localStorage.setItem(CLE_SYSTEME, JSON.stringify(etatSyst)); } catch {}
+}
+
+function ouvrirPopover(ouvert) {
+  popoverSysteme.hidden = !ouvert;
+  boutonSysteme.setAttribute("aria-expanded", String(ouvert));
+}
+
+boutonSysteme.addEventListener("click", (e) => {
+  e.stopPropagation();
+  ouvrirPopover(popoverSysteme.hidden);
+});
+
+document.addEventListener("pointerdown", (e) => {
+  if (!popoverSysteme.hidden && !popoverSysteme.contains(e.target) &&
+      e.target !== boutonSysteme && !boutonSysteme.contains(e.target)) ouvrirPopover(false);
+});
+
+ctlVolume.addEventListener("input", () => {
+  etatSyst.volume = Number(ctlVolume.value);
+  if (etatSyst.volume > 0 && etatSyst.sonCoupe) etatSyst.sonCoupe = false;
+  majSysteme();
+});
+ctlSonCoupe.addEventListener("click", () => {
+  etatSyst.sonCoupe = !etatSyst.sonCoupe;
+  majSysteme();
+});
+ctlWifi.addEventListener("click", () => {
+  etatSyst.wifi = !etatSyst.wifi;
+  majSysteme();
+});
+ctlBatterie.addEventListener("input", () => {
+  etatSyst.batterie = Number(ctlBatterie.value);
+  majSysteme();
+});
+ctlLuminosite.addEventListener("input", () => {
+  etatSyst.luminosite = Number(ctlLuminosite.value);
+  majSysteme();
+});
+
+majSysteme();
+
 /* --- Horloge --------------------------------------------------------------------- */
 
 const horloge = $("#horloge");
@@ -901,7 +999,12 @@ function reinitialiserBureau() {
 /* --- Raccourcis clavier -------------------------------------------------------------------- */
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !menu.hidden) { ouvrirMenu(false); return; }
+  if (e.key === "Escape") {
+    let pris = false;
+    if (!menu.hidden) { ouvrirMenu(false); pris = true; }
+    if (!popoverSysteme.hidden) { ouvrirPopover(false); pris = true; }
+    if (pris) return;
+  }
   if (!e.ctrlKey || !e.altKey) return;
 
   // Touches directionnelles (mosaïque, §10.6) — avec Maj : échange.

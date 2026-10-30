@@ -369,7 +369,7 @@ Ce sont les points qui bloquent, et ce qui les lèverait.
 | 5 | Statut de « sensation macOS » dans `ARCHITECTURE.md` §11 | **ouverte** — la section 3 : le reformuler ou l'abandonner explicitement |
 | 6 | Couleur d'accent définitive | **tranchée** (2026-10-28) : palette « Encre et soleil » (§4) — orange brûlé `#FF6B2C` en principal, safran `#FFC53D` en secondaire ; assombrissements clairs au §4.3 |
 | 7 | Rapport à l'esthétique Pop!_OS / COSMIC | **tranchée** (Jean Yannick, 2026-10-29) : on emprunte la **mosaïque automatique** (§10.6) et l'**esthétique** (coins arrondis ouverts, §6). **Palette conservée** — Encre et soleil ne bouge pas. Ni dock, ni panneau latéral, ni lanceur, ni contrôles en haut à droite |
-| 8 | Halo lumineux de la lisière | **tranchée** (2026-10-29) : flou réel au-dessus de la bande 2 px. Exception §3 **provisoire** — le coût llvmpipe ne se mesurera qu'à J7 (§10.5) |
+| 8 | Halo lumineux de la lisière | **tranchée** (2026-10-29) : flou réel au-dessus de la bande 2 px. Exception §3 **provisoire** — le coût llvmpipe ne se mesurera qu'à J7 (§10.5) |\n| 9 | Indicateurs système (volume, Wi-Fi, batterie, luminosité) | **tranchée** (Jean Yannick, 2026-10-30) : icônes dans la barre droite + **popover réglages rapides** ancré (§10.7). Alertes au `primary` seulement ; état persistant en maquette (`localStorage`) |
 
 ---
 
@@ -386,7 +386,7 @@ de la maquette.
 |---|---|
 | Gauche | Menu XILI (démarreur, thème, animations, préférences) |
 | Centre | Tâches : une entrée par fenêtre ouverte ; l'active est marquée au filet `primary` |
-| Droite | Bascule de thème, horloge (mono, `text-xs`) |
+| Droite | Indicateurs système (volume, Wi-Fi, batterie — §10.7), bascule de thème, horloge (mono, `text-xs`) |
 
 Justification : maximise l'espace vertical, tient sur 1280×800, et cohérent
 avec « l'outil bien rangé ». Le dock est refusé : c'est un deuxième système
@@ -518,6 +518,43 @@ maquette sert à **la valider avant d'en payer le coût en noyau** : un
 gestionnaire de partages binaires est du calcul de géométrie pur, sans
 dépendance matérielle — c'est précisément le genre de chose qu'on veut tester
 en HTML avant de l'écrire en Rust.
+
+---
+
+### 10.7 Indicateurs système et réglages rapides (décision 2026-10-30)
+
+Tranché par questionnaire **avant code**. L'esprit du panneau de réglages
+rapides de COSMIC, **sans dock ni panneau latéral** : les indicateurs vivent
+dans la barre droite, le réglage vit dans un popover.
+
+| Indicateur | Dans la barre | Dans le popover |
+|---|---|---|
+| **Volume** | icône à deux états (coupé / niveau), `primary` si coupé | curseur 0–100 + bascule coupé/découpé |
+| **Wi-Fi** | icône connecté/déconnecté, `primary` si perdu | bascule connecté / hors réseau |
+| **Batterie** | icône avec niveau, `primary` sous 20 % | curseur 0–100 |
+| **Luminosité** | — (pas un état pertinent à lire en permanence) | curseur 0–100, superpose un voile sur le bureau |
+
+#### Règles
+
+- **Un seul bouton**, trois icônes dedans : le clic ouvre **un popover
+  étroit** ancré à droite, sous la barre. Ce n'est pas le panneau latéral
+  refusé au §10.1 (il couvrait toute la hauteur) : une carte resserrée,
+  `radius-lg`, qui ferme au clic extérieur ou à `Échap` — le même
+  comportement que le menu XILI.
+- **Valeurs simulées en maquette**, mais **persistantes** entre
+  rechargements (`localStorage`, clé unique `xili.etat-systeme`). Nommer la
+  clé ici sert le J7 : le compositeur aura le même besoin, simulé ou
+  réellement lu.
+- **Alertes au `primary` seulement** (décision du questionnaire) : batterie
+  sous 20 %, Wi-Fi perdu, son coupé. La **couleur** porte l'alerte, la
+  **forme** ne bouge pas (aucune couleur hors palette, §3 ; pas d'icône
+  de remplacement).
+- **Icônes SVG inline** — même raison que les contrôles de fenêtre : les
+  glyphes volume/réseau/batterie n'existent pas dans Inter ni JetBrains
+  Mono, et une icône vectorielle se porte telle quelle vers le J7.
+- **Aplats seulement** : le popover est `surface` + filet `rule`, élévation
+  sans ombre (§6). Le voile de luminosité est un aplat
+  `pointer-events: none`, opacité `1 − luminosité / 100`.
 
 ---
 

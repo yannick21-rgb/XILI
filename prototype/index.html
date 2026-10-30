@@ -26,6 +26,27 @@
   </div>
   <div id="barre-taches" class="barre-taches" aria-label="Fenêtres ouvertes"></div>
   <div class="barre-cote barre-cote-droite">
+    <!-- Indicateurs système (§10.7) : un seul bouton, trois icônes ; le clic
+         ouvre le popover de réglages rapides. -->
+    <button id="bouton-systeme" class="barre-bouton barre-systeme" aria-haspopup="true" aria-expanded="false"
+            title="Réglages rapides (volume, Wi-Fi, batterie, luminosité)">
+      <svg class="sys-icone" id="icone-volume" viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M2 4.5 L4 4.5 L7 2 L7 10 L4 7.5 L2 7.5 Z"/>
+        <path class="ondes" d="M9 4.5 C10.2 5.5 10.2 6.5 9 7.5"/>
+        <path class="croix" d="M8.2 4.6 L10.8 7.4 M10.8 4.6 L8.2 7.4" fill="none"/>
+      </svg>
+      <svg class="sys-icone" id="icone-wifi" viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M1 4.6 C4 1.8 8 1.8 11 4.6"/>
+        <path d="M2.6 6.6 C4.8 4.7 7.2 4.7 9.4 6.6"/>
+        <circle cx="6" cy="9.4" r="1" class="point"/>
+      </svg>
+      <svg class="sys-icone" id="icone-batterie" viewBox="0 0 12 12" aria-hidden="true">
+        <rect x="1" y="3.5" width="9" height="5" rx="1"/>
+        <path d="M10.6 5 L10.6 7" fill="none" class="borne"/>
+        <rect class="niveau" x="2" y="4.5" width="7" height="3" rx="0.5"/>
+      </svg>
+      <span id="pourcent-batterie" class="barre-pourcent">--%</span>
+    </button>
     <button id="mosaique" class="barre-bouton barre-mosaique" data-active="false"
             title="Mosaïque (Ctrl+Alt+M)" aria-pressed="false">
       <span class="pastille" aria-hidden="true"></span><span>Mosaïque</span>
@@ -56,6 +77,33 @@
   <hr class="menu-filet">
   <button class="menu-item" data-action="propos">À propos de XILI</button>
 </nav>
+
+<!-- Popover réglages rapides (§10.7) -->
+<div id="popover-systeme" class="popover-systeme" hidden aria-label="Réglages rapides">
+  <div class="pop-ligne">
+    <span class="pop-libelle">Volume</span>
+    <input type="range" id="ctl-volume" min="0" max="100" value="65" aria-label="Volume">
+    <button class="pop-bascule" id="ctl-son-coupe" aria-pressed="false" aria-label="Couper le son" title="Couper le son"></button>
+  </div>
+  <div class="pop-ligne">
+    <span class="pop-libelle">Wi-Fi</span>
+    <button class="pop-bascule pop-txt" id="ctl-wifi" aria-pressed="true">connecté</button>
+    <span></span>
+  </div>
+  <div class="pop-ligne">
+    <span class="pop-libelle">Batterie</span>
+    <input type="range" id="ctl-batterie" min="0" max="100" value="78" aria-label="Batterie">
+    <span id="pourcent-batterie-pop" class="pop-pourcent">78 %</span>
+  </div>
+  <div class="pop-ligne">
+    <span class="pop-libelle">Luminosité</span>
+    <input type="range" id="ctl-luminosite" min="0" max="100" value="100" aria-label="Luminosité">
+    <span id="pourcent-luminosite" class="pop-pourcent">100 %</span>
+  </div>
+</div>
+
+<!-- Voile de luminosité (§10.7) : aplat, pointer-events none -->
+<div id="voile-luminosite" aria-hidden="true"></div>
 
 <!-- Bureau : épingles + fenêtres -->
 <main id="bureau">

@@ -5,7 +5,8 @@
  *
  * On se contente de constater ce que le bootloader a relevé, sans
  * encore allouer ni modifier la pagination : l'allocateur physique
- * (bitmap, puis buddy) arrive en J2.4 et le paging higher-half en J2.3.
+ * (bitmap, puis buddy) arrive en J2.4, le paging higher-half en J2.3
+ * et l'allocateur noyau slab (kmalloc/kfree) en J2.5.
  * ============================================================ */
 
 use crate::console;
@@ -14,6 +15,7 @@ use core::mem::size_of;
 
 pub mod paging;
 pub mod phys;
+pub mod slab;
 
 /// Index des tranches dans [`MemMap::summary`].
 pub const IDX_AVAILABLE: usize = 0;

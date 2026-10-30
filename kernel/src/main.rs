@@ -211,6 +211,24 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
     // --------------------------------------------------------------------
 
+    // --- J2.5 : allocateur noyau kmalloc/kfree --------------------------
+    //
+    // Après l'allocateur physique bitmap (J2.4), on initialise le slab
+    // qui fournit kmalloc/kfree. Le test alloue/libère des blocs de
+    // tailles variées, vérifie l'alignement et la non-contamination.
+    unsafe { mm::slab::kmalloc_init() };
+    console::print(format_args!(
+        "allocateur noyau : slab (kmalloc/kfree, {} pages)\n",
+        mm::slab::pages()
+    ));
+    let kmalloc_ok = unsafe { mm::slab::test() };
+    console::print(format_args!(
+        "J2.5c: allocateur noyau slab kmalloc/kfree - {} (pages {})\n",
+        if kmalloc_ok { "OK" } else { "ECHEC" },
+        mm::slab::pages()
+    ));
+    // --------------------------------------------------------------------
+
     console::print(format_args!("\n{}\n", J1_MARKER));
 
     // --- J2.6 : PIC + timer + clavier --------------------------

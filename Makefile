@@ -75,8 +75,9 @@ run-esp: esp
 # Test de non-régression : le noyau doit booter et atteindre les marqueurs
 # J1 (console), J2.3 (tables de pages 4 niveaux), J2.3b (higher-half),
 # J2.4 (allocateur physique bitmap), J2.5 (IDT + exceptions), J2.5b (#PF),
-# J2.6 (PIC remappé), J2.6b (timer IRQ), J2.7 (planificateur priority),
-# J2.7b (workers H/M/L), J2.8 (GPR sauvegardes + priorities).
+# J2.5c (allocateur noyau slab kmalloc/kfree), J2.6 (PIC remappé),
+# J2.6b (timer IRQ), J2.7 (planificateur priority), J2.7b (workers H/M/L),
+# J2.8 (GPR sauvegardes + priorities).
 #
 # J2.3 est le critère du paging : un descripteur fautif fait triple-fauter
 # le noyau au chargement de CR3, avant qu'il n'imprime le marqueur.
@@ -98,6 +99,7 @@ test: iso
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(LOG) \
 	  && grep -q "J2.5: IDT + exceptions" $(LOG) \
 	  && grep -q "J2.5b: test #PF" $(LOG) \
+	  && grep -q "J2.5c: allocateur noyau slab kmalloc/kfree - OK" $(LOG) \
 	  && grep -q "vecteur 14 (#PF Page Fault)" $(LOG) \
 	  && grep -q "cr2" $(LOG) \
 	  && grep -q "J2.6: PIC remappe" $(LOG) \
@@ -108,7 +110,7 @@ test: iso
 	  && grep "TH" $(LOG) >/dev/null \
 	  && grep -q "J2.5b: test #PF" $(LOG) \
 	  && ! grep -q "!" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.6 + J2.6b + J2.7 + J2.7b + J2.8)" \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
@@ -123,24 +125,26 @@ test-uefi: iso-uefi esp
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
 	  && grep -q "higher-half : OK" $(UEFI_LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
+	  && grep -q "J2.5c: allocateur noyau slab kmalloc/kfree - OK" $(UEFI_LOG) \
 	  && grep -q "J2.7: planificateur priorite" $(UEFI_LOG) \
 	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
 	  && grep "TH" $(UEFI_LOG) >/dev/null \
 	  && ! grep -q "!" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b + J2.8)" \
+	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8)" \
 	  || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
 	  && grep -q "higher-half : OK" $(UEFI_LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
+	  && grep -q "J2.5c: allocateur noyau slab kmalloc/kfree - OK" $(UEFI_LOG) \
 	  && grep -q "J2.7: planificateur priorite" $(UEFI_LOG) \
 	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
 	  && grep "TH" $(UEFI_LOG) >/dev/null \
 	  && ! grep -q "!" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b + J2.8)" \
+	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8)" \
 	  || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:

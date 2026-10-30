@@ -315,6 +315,79 @@ décisions prises.
 
 ---
 
+## 2026-10-30 — Deux emprunts à Pop!_OS : mosaïque automatique + halo lumineux
+
+- Demande de Jean Yannick : « je veux qu'il ait une interface similaire à
+  Pop!_OS et le halo doit être lumineux ». Posé en questionnaire **avant de
+  coder** (règle du dépôt) ; choix notés puis figés dans `DESIGN.md` (§6,
+  §3, §10.5, §10.6, §9 décisions 7-8) **avant** le code.
+- **Ce qu'on emprunte de Pop!_OS/COSMIC** : la **mosaïque automatique** (les
+  fenêtres s'emboîtent au lieu de se chevaucher) et l'**esthétique générale**
+  (coins arrondis ouverts). **Ce qu'on refuse** : dock, panneau latéral,
+  lanceur, contrôles en haut à droite — la disposition XILI (§10.1) ne bouge
+  pas. **La palette reste « Encre et soleil »** (§4) : Pop est violet/teal,
+  mais l'identité vient de Jean Yannick, pas de Pop.
+- **Rayons ouverts (§6)** : `radius-md` 8 → 12 px, `radius-lg` 12 → 20 px,
+  sur le modèle COSMIC — des fenêtres plus arrondies lisent comme des objets
+  posés, pas comme des cadres. Toujours multiples de 4.
+- **Mosaïque (§10.6), implémentation** : arbre de partages binaires
+  (`{or, ratio, enfants}` | feuille d'id). Ouvrir partage la feuille
+  active en deux (orientation alternée → grille) ; fermer effondre le
+  partage sur sa sœur. Redimensionner au poignée change le **ratio du
+  partage parent** (clamp 0.15–0.85), pas la taille de la fenêtre. Glisser
+  une fenêtre tuilée la fait **sortir de l'arbre** (flottant). Marges :
+  `MARGE_MOSAIQUE` 12 px, `ECART_MOSAIQUE` 8 px. En mode tuilé, le plancher
+  CSS flottant (320×200) est neutralisé — sinon les fenêtres se chevauchent
+  quand le bureau est étroit ; la borne du ratio le remplace.
+- Un indicateur **Mosaïque** dans la barre haute (pastille, `data-active`),
+  une entrée dans le menu XILI, la commande terminal `mosaique [on|off]`,
+  les raccourcis : `Ctrl+Alt+M` (bascule), `Ctrl+Alt+←→↑↓` (focus
+  directionnel, géométrique centre à centre), `Ctrl+Alt+Maj+←→↑↓` (échange
+  dans l'arbre), `Ctrl+Alt+R` (tourner le partage), `Ctrl+Alt+G`
+  (flottant ⇄ mosaïque pour la fenêtre active). `Ctrl+Alt+F` et `L` déjà
+  pris ; rien n'a été réaffecté.
+- **Vérifié en navigateur** (onglet suspendu → mesures prises après
+  invalidation forcée du style ; voir la note ci-dessous) : ouverture/
+  fermeture dans l'arbre, rotation, ratio au poignée, sortie au glisser,
+  focus directionnel gauche-droite, échange avec suivi de focus,
+  `Ctrl+Alt+G`, bascule `M` + indicateur synchronisé. Zéro erreur console.
+  Style calculé de la lisière : bande `2px` puis halo `14px 2px` dans **un
+  seul `box-shadow`** (deux couches, une seule déclaration).
+- **Halo lumineux (§10.5)** : retour d'un **flou réel** par-dessus la bande
+  de 2 px. La bande seule restait « morte » — l'arête était lisible mais la
+  lumière n'y était pas. Le halo est une **exception §3 assumée et
+  provisoire** : `--lisiere-halo: 0 0 14px 2px`, une seule fenêtre (l'
+  active), un seul `box-shadow`. **Le coût llvmpipe ne peut pas être mesuré
+  depuis la maquette** (navigateur hôte, GPU) — la mesure se fera à J7 sous
+  QEMU ; c'est écrit tel quel dans le doc plutôt que prétendu mesuré. Repli
+  si le budget casse : retirer le halo, garder la bande 2 px.
+- **Pièges de la session, pour s'en souvenir** :
+  - Un onglet au fond que Chrome suspend fige le calcul de style : le style
+    **inline** dit « tuilé » mais le style **calculé** (et
+    `getBoundingClientRect`) reste à la géométrie flottante. Retouché par
+    une écriture à valeur *différente* (0 → re-tuile). Les « fenêtres
+    chevauchées » observées au départ n'étaient pas un bug du moteur.
+  - `setPointerCapture` lève `NotFoundError` sous événements
+    `PointerEvent` synthétiques (pointerId fictif) — les gestes de glisser
+    restent à tester à la main ; sous un pointeur réel le code est
+    conforme.
+  - Le serveur `http.server 8742` est retombé une deuxième fois (HTTP 000,
+    même symptôme silencieux). Relancé de la même façon.
+- **Polices (rattrapage de journal)** : la décision du 2026-10-29 —
+  **Inter** (interface) + **JetBrains Mono** (mono) — était appliquée dans
+  le code et documentée en §5.1 mais **absente du journal**. Sous-ensembles
+  latin + accents français, OFL
+  (`assets/fonts/inter-latin.woff2`,
+  `assets/fonts/jetbrainsmono-latin.woff2`,
+  licences `OFL-Inter.txt`, `OFL-JetBrainsMono.txt`). Entrée de journal
+  manquante notée ici plutôt que réécrite dans le passé.
+- À faire ensuite (non journalisé, reste ouvert) : test à la main des
+  gestes de glisser (le poignée et la sortie de l'arbre), capture d'écran
+  des deux thèmes quand la session bureau sera visible, puis mise à jour du
+  statut à la mesure llvmpipe à J7.
+
+---
+
 ## 2026-10-28 — J2.6 : PIC remappé, timer 100 Hz, clavier PS/2
 
 - `kernel/src/io.rs` : primitives partagées `outb`/`inb`/`outw`/`inw` avec
@@ -426,3 +499,23 @@ décisions prises.
   128 bits) — suffisant pour le round-robin, pas pour les threads
   utilisateurs (J3). Le coût d'une save/restore complète (256 octets)
   est noté pour J3.
+
+---
+
+## 2026-10-30 — J2.5c : allocateur noyau slab (kmalloc/kfree)
+
+- `kernel/src/mm/slab.rs` : free-list first-fit, expansion par pages du
+  physical allocator (`phys::alloc_page`). En-tête 16 octets (size + next),
+  utilisateur à offset 16, aligné 16. `kmalloc`/`kfree` API globale, 8 pages
+  (32 Kio) réservées à l'init.
+- Test J2.5c : 4 allocations (32/64/128/256), vérifie alignement (16),
+  non-chevauchement des régions utilisateurs, écriture/lecture, libération +
+  réutilisation. Bug initial : la vérification ajoutait BLOCK_HEADER à la fin
+  de chaque bloc, faisant chevaucher les blocs adjacents. Corrigé : on compare
+  [ptr, ptr+size) directement.
+- `main.rs` : `mm::slab::kmalloc_init()` après `phys::test()`, marqueur
+  `J2.5c: allocateur noyau slab kmalloc/kfree - OK`.
+- `Makefile` : gates J2.5c ajoutés aux tests BIOS, UEFI ISO et ESP.
+- Vérifié : `make test` + `make test-uefi` passent. Log : `K2.5c: OK`,
+  `J2.5c: ... OK (pages 8)`.
+- Reste : kmalloc avec sérialisation (verrou par CPU) pour J3 SMP.

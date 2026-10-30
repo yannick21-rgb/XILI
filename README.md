@@ -122,7 +122,7 @@ prouver que le noyau démarre sous un firmware UEFI.
 ## Prochaine étape
 
 **J2 — mémoire** : carte mémoire lue (✓), paging 4 niveaux + higher-half (✓),
-allocateur physique bitmap (✓), IDT/exceptions/#PF (✓), PIC remappé + timer
-100 Hz + clavier (✓), planificateur à priorités avec aging + GPR complets (✓ J2.8).
-Reste : allocateur noyau slab (kmalloc), mmap/munmap/mprotect, APIC/SMP.
-Voir `docs/ROADMAP.md`.
+allocateur physique bitmap (✓), IDT/exceptions/#PF (✓), allocateur noyau slab
+kmalloc/kfree (✓ J2.5c), PIC remappé + timer 100 Hz + clavier (✓),
+planificateur à priorités avec aging + GPR complets (✓ J2.8).
+Reste : mmap/munmap/mprotect, APIC/SMP, puis J3 (syscall/sysret, ELF loader).

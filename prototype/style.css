@@ -169,6 +169,60 @@ body.sans-animations *::after {
 }
 .barre-mosaique[data-active="true"] .pastille { opacity: 1; }
 
+/* Indicateurs système (§10.7) : cluster volume / Wi-Fi / batterie */
+.barre-systeme { gap: 6px; padding: 0 var(--sp-2); }
+.sys-icone { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+#icone-volume .ondes { display: none; }
+#icone-volume .croix { display: none; }
+.barre-systeme[data-coupe="true"] #icone-volume .croix { display: block; }
+.barre-systeme:not([data-coupe="true"]) #icone-volume .ondes { display: block; }
+.barre-systeme[data-wifi="false"] #icone-wifi path:first-child { display: none; }   /* grand arc retiré quand déconnecté */
+.barre-systeme[data-wifi="false"] #icone-wifi circle { opacity: .35; }
+#icone-batterie .niveau { fill: currentColor; stroke: none; }
+#icone-batterie .borne { fill: none; stroke: currentColor; stroke-width: 1.4; }
+.barre-pourcent { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Alerte : primary seulement, la forme ne bouge pas (§10.7).
+   Posée sur l'icône concernée : stroke: currentColor suit. */
+.alerte { color: var(--primary) !important; }
+
+/* Popover réglages rapides : carte resserrée, élévée sans ombre (§6) */
+.popover-systeme {
+  position: fixed;
+  top: calc(var(--barre-h) + 4px);
+  right: 8px;
+  width: 260px;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  z-index: 1100;
+  display: grid;
+  gap: var(--sp-2);
+}
+.pop-ligne { display: grid; grid-template-columns: 78px 1fr auto; align-items: center; gap: var(--sp-2); }
+.pop-libelle { color: var(--text-dim); }
+.pop-libelle:first-letter { text-transform: uppercase; }
+.pop-bascule { min-height: var(--hit); }
+.pop-bascule[aria-pressed="true"] { color: var(--text); }
+.pop-txt { border: none; background: none; color: var(--text-dim); }
+.pop-pourcent { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.popover-systeme input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+  min-height: var(--hit);
+}
+
+/* Voile de luminosité : aplat parent plein, au-dessus du bureau sous la barre */
+#voile-luminosite {
+  position: fixed;
+  inset: var(--barre-h) 0 0 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1050;
+}
+
 .barre-marque { width: 24px; height: 24px; display: block; flex: none; }
 
 .barre-taches {

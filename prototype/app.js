@@ -236,10 +236,6 @@ function installerFenetre(id) {
       const dimension = horizontal ? r.w : r.h;
       const origRatio = partage.ratio;
       const startX = e.clientX, startY = e.clientY;
-      const delta = () => horizontal
-        ? (e.clientX - startX) / dimension
-        : (e.clientY - startY) / dimension;
-      void delta; // (début de geste : aucun mouvement encore)
 
       poignee.setPointerCapture(e.pointerId);
       el.classList.add("sans-transition");   // sinon la transition suit le pointeur
@@ -503,6 +499,17 @@ function majBarreTaches() {
   }
 }
 
+/* --- Indicateur de mosaïque (barre haute, §10.6) --------------------------------- */
+
+const boutonMosaique = $("#mosaique");
+
+function majIndicateurMosaique() {
+  boutonMosaique.dataset.active = String(mosaiqueActivee);
+  boutonMosaique.title = `Mosaïque ${mosaiqueActivee ? "activée" : "désactivée"} (Ctrl+Alt+M)`;
+}
+boutonMosaique.addEventListener("click", () => basculerMosaique());
+majIndicateurMosaique();
+
 /* --- Horloge --------------------------------------------------------------------- */
 
 const horloge = $("#horloge");
@@ -576,6 +583,7 @@ menu.addEventListener("click", (e) => {
       animationsActives = !animationsActives;
       majAnimations();
       break;
+    case "mosaique": basculerMosaique(); break;
     case "restart": reinitialiserBureau(); break;
     case "propos": ouvrirPropos(); break;
   }
@@ -662,6 +670,15 @@ const COMMANDES = {
   date: { aide: "date — date et heure", handler: () => new Date().toLocaleString("fr-FR") },
   echo: { aide: "echo [texte] — répéter", handler: (args) => echapper(args.join(" ")) },
   effacer: { aide: "effacer — vider l'écran", handler: () => null },
+  mosaique: {
+    aide: "mosaique [on|off] — mosaïque automatique des fenêtres",
+    handler(args) {
+      if (args[0] === "on") basculerMosaique(true);
+      else if (args[0] === "off") basculerMosaique(false);
+      else basculerMosaique();
+      return `mosaïque : ${mosaiqueActivee ? "activée" : "désactivée"}`;
+    },
+  },
   lisiere: {
     aide: "lisiere [couleur] — couleur de la lisière (ex. #FFC53D)",
     handler(args) {
@@ -886,10 +903,26 @@ function reinitialiserBureau() {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !menu.hidden) { ouvrirMenu(false); return; }
   if (!e.ctrlKey || !e.altKey) return;
+
+  // Touches directionnelles (mosaïque, §10.6) — avec Maj : échange.
+  switch (e.key) {
+    case "ArrowLeft": case "ArrowRight": case "ArrowUp": case "ArrowDown": {
+      const carte = { ArrowLeft: "gauche", ArrowRight: "droite", ArrowUp: "haut", ArrowDown: "bas" };
+      const dir = carte[e.key];
+      e.preventDefault();
+      if (e.shiftKey) echangerDirection(dir);
+      else if (mosaiqueActivee) focusDirection(dir);
+      return;
+    }
+  }
+
   const t = e.key.toLowerCase();
   if (t === "t") { e.preventDefault(); ouvrirTerminal(); }
   else if (t === "f") { e.preventDefault(); ouvrirFichiers(); }
   else if (t === "l") { e.preventDefault(); basculerTheme(); }
+  else if (t === "m") { e.preventDefault(); basculerMosaique(); }
+  else if (t === "r") { e.preventDefault(); tournerPartage(); }
+  else if (t === "g" && idActif !== null) { e.preventDefault(); basculerFlottante(idActif); }
 });
 
 /* --- Démarrage ------------------------------------------------------------------------------ */

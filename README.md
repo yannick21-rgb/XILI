@@ -121,5 +121,8 @@ prouver que le noyau démarre sous un firmware UEFI.
 
 ## Prochaine étape
 
-**J2 — mémoire** : parseur de memory map (UEFI/E820), paging higher-half,
-allocateur physique, IDT/exceptions. Voir `docs/ROADMAP.md`.
+**J2 — mémoire** : carte mémoire lue (✓), paging 4 niveaux + higher-half (✓),
+allocateur physique bitmap (✓), IDT/exceptions/#PF (✓), PIC remappé + timer
+100 Hz + clavier (✓), planificateur à priorités avec aging + GPR complets (✓ J2.8).
+Reste : allocateur noyau slab (kmalloc), mmap/munmap/mprotect, APIC/SMP.
+Voir `docs/ROADMAP.md`.

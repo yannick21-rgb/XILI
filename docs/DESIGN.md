@@ -365,7 +365,7 @@ Ce sont les points qui bloquent, et ce qui les lèverait.
 | 1 | Signification du nom XILI | **ouverte** — le choix A/B/C de la section 1 |
 | 2 | Thème par défaut (sombre ou clair) | **tranchée** (Jean Yannick, 2026-10-28) : sombre |
 | 3 | Résolution et densité de référence | **tranchée** (2026-10-28) : 1280×800 — le petit écran comme contrainte |
-| 4 | Faces typographiques exactes | **ouverte** — une maquette qui les montre côte à côte |
+| 4 | Faces typographiques exactes | **décidée** le 2026-10-29 : **Inter + JetBrains Mono**, x-height 55 %, sous-ensembles OFL générés (see §5.2). Maquette comparatifs validée en rendu réel 12 px |
 | 5 | Statut de « sensation macOS » dans `ARCHITECTURE.md` §11 | **ouverte** — la section 3 : le reformuler ou l'abandonner explicitement |
 | 6 | Couleur d'accent définitive | **tranchée** (2026-10-28) : palette « Encre et soleil » (§4) — orange brûlé `#FF6B2C` en principal, safran `#FFC53D` en secondaire ; assombrissements clairs au §4.3 |
 | 7 | Rapport à l'esthétique Pop!_OS / COSMIC | **tranchée** (Jean Yannick, 2026-10-29) : on emprunte la **mosaïque automatique** (§10.6) et l'**esthétique** (coins arrondis ouverts, §6). **Palette conservée** — Encre et soleil ne bouge pas. Ni dock, ni panneau latéral, ni lanceur, ni contrôles en haut à droite |

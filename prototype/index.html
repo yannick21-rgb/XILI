@@ -26,6 +26,10 @@
   </div>
   <div id="barre-taches" class="barre-taches" aria-label="Fenêtres ouvertes"></div>
   <div class="barre-cote barre-cote-droite">
+    <button id="mosaique" class="barre-bouton barre-mosaique" data-active="false"
+            title="Mosaïque (Ctrl+Alt+M)" aria-pressed="false">
+      <span class="pastille" aria-hidden="true"></span><span>Mosaïque</span>
+    </button>
     <button id="bascule-theme" class="barre-bouton" title="Changer de thème (Ctrl+Alt+L)">clair</button>
     <span id="horloge" class="barre-horloge">--:--</span>
   </div>
@@ -47,6 +51,7 @@
   </div>
   <hr class="menu-filet">
   <button class="menu-item" data-action="animations">Animations&nbsp;: <span id="etat-animations">actives</span></button>
+  <button class="menu-item" data-action="mosaique">Mosaïque automatique <span>Ctrl+Alt+M</span></button>
   <button class="menu-item" data-action="restart">Réinitialiser le bureau</button>
   <hr class="menu-filet">
   <button class="menu-item" data-action="propos">À propos de XILI</button>

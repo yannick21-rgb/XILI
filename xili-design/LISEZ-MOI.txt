@@ -32,13 +32,24 @@ Conclusion : cette police ne sert qu'au LOGOTYPE (un fichier image), et
 uniquement pour le mot « XILI » sans chiffres ni ponctuation. Pour tout le
 reste — interface, documents, console, messages — il faut une police libre.
 
-Police pour le reste (décision 4, non tranchée)
------------------------------------------------
+Police pour le reste (décision 4 — TRANCHÉE le 2026-10-29, voir DESIGN.md §5.1)
 
-docs/DESIGN.md propose : sans-serif à œil bas (style Inter / IBM Plex Sans)
-et monospace (style JetBrains Mono / IBM Plex Mono). Aucune des deux n'est
-installée sur cette machine — seules sont présentes Noto Sans, DejaVu,
-Liberation, Nimbus et FreeSans.
+----------------------------------------------------------------------
 
-Inter et IBM Plex sont sous licence SIL OFL : libres, embarquables, avec les
-accents. C'est la piste à suivre pour XILI.
+### 5.1 — BINAIRE VALIDÉ : Inter + JetBrains Mono (décision 2026-10-29)
+
+- Interface : **Inter** — x-height 55 % (contre 52 % pour les candidats
+  concurrents Plex), accentuée. Choix du « readable avant pretty ».
+- Mono : **JetBrains Mono** — x-height 55 %, zéro pointé, `l` à patte, `I` à
+  empattements. Le terminal est un citoyen de première classe (§5).
+- Sous-ensembles livrés : `assets/fonts/inter-latin.woff2` (117 Ko),
+  `assets/fonts/jetbrainsmono-latin.woff2` (46 Ko) + licences OFL.
+- Sources complètes (travail) : `xili-design/fonts-evaluation/`.
+
+Règles d'usage issues de l'évaluation :
+
+1. Une icône d'interface se dessine en SVG — les glyphes `✕`, `⤢`, `≡` ne
+   sont pas dans Inter/JetBrains Mono. Le prototype utilise désormais des
+   SVG pour les contrôles de fenêtre.
+2. Le texte courant n'emploie que des caractères couverts par les
+   sous-ensembles (accents FR, ponctuation, opérateurs). Vérifié : OK.

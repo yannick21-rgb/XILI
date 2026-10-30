@@ -375,6 +375,11 @@ input[type="color"] {
 /* Posée après, donc prioritaire : pendant qu'on tire un ratio ou une fenêtre,
    la transition suivrait le pointeur et donnerait une impression de retard. */
 .fenetre.sans-transition { transition: none !important; }
+/* En mosaïque, la taille vient de l'arbre : le plancher flottant (320×200)
+   n'a plus à s'y opposer, sinon les fenêtres se chevauchent quand le bureau
+   est étroit. La borne du poignée (ratio 0.15–0.85, §10.6) remplace le
+   plancher en mode tuilé. */
+.fenetre.en-mosaique { min-width: 0; min-height: 0; }
 .fenetre.en-mosaique .fenetre-titre { cursor: grab; }
 .fenetre.en-mosaique.deplacee .fenetre-titre { cursor: grabbing; }
 

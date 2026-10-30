@@ -73,8 +73,10 @@ run-esp: esp
 	$(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot
 
 # Test de non-régression : le noyau doit booter et atteindre les marqueurs
-# J1 (console), J2.3 (tables de pages 4 niveaux), J2.3b (higher-half)
-# et J2.4 (allocateur physique bitmap).
+# J1 (console), J2.3 (tables de pages 4 niveaux), J2.3b (higher-half),
+# J2.4 (allocateur physique bitmap), J2.5 (IDT + exceptions), J2.5b (#PF),
+# J2.6 (PIC remappé), J2.6b (timer IRQ), J2.7 (planificateur priority),
+# J2.7b (workers H/M/L), J2.8 (GPR sauvegardes + priorities).
 #
 # J2.3 est le critère du paging : un descripteur fautif fait triple-fauter
 # le noyau au chargement de CR3, avant qu'il n'imprime le marqueur.
@@ -83,8 +85,12 @@ run-esp: esp
 # valeur par l'adresse virtuelle réussit (sinon #PF avant l'impression).
 #
 # J2.7 (planificateur) : le worker s'exécute entre deux ticks — le
-# caractère 'W' apparaît sur la voie série entre deux 'T' consécutifs,
+# caractère 'H' apparaît sur la voie série entre deux 'T' consécutifs,
 # preuve d'un context switch.
+#
+# J2.8 : le worker H utilise r12 comme sentinelle. Si GPRs sont sauvegardés,
+# on lit '.' après 'H' (pas de '!'). Les workers M et L doivent aussi
+# apparaître (priorité + aging → tous les workers tournent).
 test: iso
 	@timeout 20 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
@@ -96,10 +102,13 @@ test: iso
 	  && grep -q "cr2" $(LOG) \
 	  && grep -q "J2.6: PIC remappe" $(LOG) \
 	  && grep -q "J2.6b: timer IRQ active" $(LOG) \
-	  && grep -q "J2.7: planificateur" $(LOG) \
-	  && grep -q "J2.7b: planificateur actif" $(LOG) \
-	  && grep "TW" $(LOG) >/dev/null \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.6 + J2.6b + J2.7 + J2.7b)" \
+	  && grep -q "J2.7: planificateur priorite" $(LOG) \
+	  && grep -q "J2.7b: planificateur + GPR" $(LOG) \
+	  && grep -q "J2.8: scheduler priorites + GPR" $(LOG) \
+	  && grep "TH" $(LOG) >/dev/null \
+	  && grep -q "J2.5b: test #PF" $(LOG) \
+	  && ! grep -q "!" $(LOG) \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.6 + J2.6b + J2.7 + J2.7b + J2.8)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
@@ -114,20 +123,24 @@ test-uefi: iso-uefi esp
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
 	  && grep -q "higher-half : OK" $(UEFI_LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
-	  && grep -q "J2.7: planificateur" $(UEFI_LOG) \
-	  && grep -q "J2.7b: planificateur actif" $(UEFI_LOG) \
-	  && grep "TW" $(UEFI_LOG) >/dev/null \
-	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b)" \
+	  && grep -q "J2.7: planificateur priorite" $(UEFI_LOG) \
+	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
+	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
+	  && grep "TH" $(UEFI_LOG) >/dev/null \
+	  && ! grep -q "!" $(UEFI_LOG) \
+	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b + J2.8)" \
 	  || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(UEFI_LOG) && grep -q "J2.3: tables de pages" $(UEFI_LOG) \
 	  && grep -q "higher-half : OK" $(UEFI_LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(UEFI_LOG) \
-	  && grep -q "J2.7: planificateur" $(UEFI_LOG) \
-	  && grep -q "J2.7b: planificateur actif" $(UEFI_LOG) \
-	  && grep "TW" $(UEFI_LOG) >/dev/null \
-	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b)" \
+	  && grep -q "J2.7: planificateur priorite" $(UEFI_LOG) \
+	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
+	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
+	  && grep "TH" $(UEFI_LOG) >/dev/null \
+	  && ! grep -q "!" $(UEFI_LOG) \
+	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.7 + J2.7b + J2.8)" \
 	  || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:

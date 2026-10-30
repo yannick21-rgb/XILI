@@ -89,7 +89,13 @@ J1: noyau charge, mode long actif, console OK.
    IST1 pour #DF, IDT 256 entrées avec handlers pour les 32 exceptions.
    Le #PF sur `0xDEAD0000` est intercepté, affiche RIP/CR2/code d'erreur
    et bloque proprement (hlt loop) au lieu de provoquer un triple fault.
-8. PIC → APIC, timer PIT/HPET, clavier PS/2.
+8. ~~PIC remappé (J2.6), timer PIT 100 Hz (J2.6), clavier PS/2 (J2.6).~~ **Fait**.
+   APIC en entrée J2.8 (SMP) — reporté.
+9. ~~Planificateur round-robin (J2.7) : switch de contexte complet entre
+   tâches noyau, IRQ timer 100 Hz.~~ **Fait** : J2.7.
+10. ~~Sauvegarde complète des 15 GPRs dans irq_common + priorités avec
+    aging (anti-starvation).~~ **Fait** : J2.8. Le worker H (prio 0) utilise
+    r12 comme sentinelle : '.' = GPRs préservés, '!' = corruption.
 
 **Test d'acceptation**
 - Le noyau affiche la carte mémoire et la quantité de RAM utilisable.

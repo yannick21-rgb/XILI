@@ -89,11 +89,56 @@ NOERR 31  /* 31 (reserved)                    */
 # --- Point commun IRQ : appelle handle_irq, puis iretq ---
 # Entrée : rsp → [vector][error_code][rip][cs][rflags]
 # handle_irq retourne dans rax le RSP de la prochaine tâche
-# (switch contextuel) → mov %rax, %rsp, add $16, iretq
+# (switch contextuel) → mov %rax, %rsp, pop GPRs, iretq
+#
+# J2.8 : sauvegarde et restauration des 15 registres généraux.
+# Sans cela, handle_timer et schedule() clobblent les registres
+# de la tâche interrompue → contexte corrompu à la reprise.
 irq_common:
-    mov %rsp, %rdi            # rdi = &frame
+    # --- Sauvegarde des GPRs (15 registres, 120 octets) ---
+    # Ordre push : r15 (adresse la plus haute) → rax (la plus basse)
+    # Le bloc [r15..rax] est en dessous de l'interrupt frame sur la pile.
+    pushq %r15
+    pushq %r14
+    pushq %r13
+    pushq %r12
+    pushq %r11
+    pushq %r10
+    pushq %r9
+    pushq %r8
+    pushq %rbp
+    pushq %rdi
+    pushq %rsi
+    pushq %rdx
+    pushq %rcx
+    pushq %rbx
+    pushq %rax
+
+    # rdi = &gpr_state (= RSP courant, pointe vers le bloc sauvé)
+    mov %rsp, %rdi
     call handle_irq           # rax = next_rsp (switch ou non)
     mov %rax, %rsp            # switch de pile vers la prochaine tâche
+
+    # --- Restauration des GPRs de la tâche suivante ---
+    # Ordre pop : rax (adresse la plus basse) → r15 (la plus haute)
+    # Revers du push : chaque pop dépile dans l'ordre inverse.
+    popq %rax
+    popq %rbx
+    popq %rcx
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rbp
+    popq %r8
+    popq %r9
+    popq %r10
+    popq %r11
+    popq %r12
+    popq %r13
+    popq %r14
+    popq %r15
+
+    # rsp → [vector][error_code][rip][cs][rflags] de la tâche suivante
     add $16, %rsp             # retirer vector + error_code factice
     iretq
 

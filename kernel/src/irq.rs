@@ -97,18 +97,32 @@ fn handle_keyboard() {
 
 /// Point d'entrée commun — appelé par `irq_common` en ASM.
 ///
-/// # Argument
-///
-/// `frame` pointe sur la pile : [vector][error_code][rip][cs][rflags].
+/// J2.8 : `gpr_ptr` pointe vers le bloc GPR sauvé par irq_common
+/// (15 registres, 120 octets). L'interrupt frame [vector][error_code]
+/// [rip][cs][rflags] se trouve juste au-dessus, à gpr_ptr + GPR_SAVE_SIZE.
 ///
 /// # Comportement
 ///
 /// Dépile le vecteur, appelle le handler approprié, envoie un EOI
 /// au PIC, puis retourne. Le stub ASM fait `iretq` pour reprendre
-/// l'exécution interrompue.
+/// l'exécution interrompue. Sur le timer (vecteur 32), appelle
+/// schedule() qui retourne le RSP de la tâche suivante.
+///
+/// # Argument
+///
+/// `gpr_ptr` : RSP après le push des GPRs par irq_common. Pointe
+/// vers le bloc GPR au sommet de la pile.
+///
+/// # Retourne
+///
+/// Le GPR pointer (RSP) de la tâche suivante — soit `gpr_ptr` lui-même
+/// (même tâche, IRQ non-timer), soit le résultat de schedule() (timer).
 #[no_mangle]
-pub extern "C" fn handle_irq(frame: *const ExceptionFrame) -> u64 {
-    let f = unsafe { &*frame };
+pub extern "C" fn handle_irq(gpr_ptr: u64) -> u64 {
+    // L'interrupt frame est au-dessus du bloc GPR.
+    let frame_ptr =
+        (gpr_ptr + crate::task::GPR_SAVE_SIZE as u64) as *const ExceptionFrame;
+    let f = unsafe { &*frame_ptr };
 
     match f.vector {
         32 => handle_timer(),
@@ -122,14 +136,14 @@ pub extern "C" fn handle_irq(frame: *const ExceptionFrame) -> u64 {
     pic::eoi((f.vector - 32) as u8);
 
     // J2.7 : sur le timer (vecteur 32), on planifie la prochaine tâche.
-    // handle_irq retourne le RSP de la tâche suivante — irq_common
-    // charge ce RSP et fait iretq, restaurant le contexte suivant.
-    // Pour les autres IRQ, on renvoie le RSP courant (pas de switch).
+    // handle_irq retourne le GPR ptr de la tâche suivante — irq_common
+    // le charge, pop les GPRs, et iretq, restaurant le contexte suivant.
+    // Pour les autres IRQ, on renvoie gpr_ptr (pas de switch).
     if f.vector == 32 {
-        return unsafe { crate::task::schedule(frame as u64) };
+        return unsafe { crate::task::schedule(gpr_ptr) };
     }
 
-    frame as u64
+    gpr_ptr
 }
 
 /* ------------------------------------------------------------

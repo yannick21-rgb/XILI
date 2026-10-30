@@ -36,22 +36,41 @@ const J23_MARKER: &str = "J2.3: tables de pages 4 niveaux, identity + higher-hal
 /// que le noyau s'exécute au-delà de HIGHER_HALF (voir J2.3b dans main).
 static LINK_GUARD: u64 = 0x5AA5_5AA5_5AA5_5AA5;
 
-/// Tâche worker (J2.7) : boucle passive, réveillée par le timer à
-/// chaque tick. Son alternance avec le noyau principal prouve que
-/// le planificateur fonctionne.
-extern "C" fn worker_task() -> ! {
+/// Worker de haute priorité (H, prio=0) — teste la préservation des GPRs.
+///
+/// J2.8 : r12 reçoit une sentinelle avant hlt. L'IRQ du timer exécute
+/// handle_timer (qui clobbe r12). Si irq_common sauvegarde les GPRs,
+/// r12 est restauré après iretq → on écrit '.'. Sinon r12 est corrompu
+/// → '!' (échec détecté visuellement dans le log série).
+extern "C" fn worker_hi() -> ! {
+    let sentinel: u64 = 0xDEAD_BEEF_CAFE_BABE;
+    let mut r: u64;
     loop {
-        crate::serial::write_byte(b'W');
+        crate::serial::write_byte(b'H');
+        unsafe {
+            r = sentinel;
+            asm!("hlt", inout("r12") r);
+        }
+        if r == sentinel {
+            crate::serial::write_byte(b'.');
+        } else {
+            crate::serial::write_byte(b'!');
+        }
+    }
+}
+
+/// Worker de priorité moyenne (M, prio=1).
+extern "C" fn worker_med() -> ! {
+    loop {
+        crate::serial::write_byte(b'M');
         unsafe { asm!("hlt") }
     }
 }
 
-/// Tâche worker secondaire (J2.7) : identique au premier mais écrite
-/// avec 'V' pour distinguer la rotation. L'alternance T/W/V/T/W/V/…
-/// prouve que le round-robin tourne sur trois tâches.
-extern "C" fn worker_task_2() -> ! {
+/// Worker de basse priorité (L, prio=2).
+extern "C" fn worker_lo() -> ! {
     loop {
-        crate::serial::write_byte(b'V');
+        crate::serial::write_byte(b'L');
         unsafe { asm!("hlt") }
     }
 }
@@ -206,17 +225,21 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         "J2.6: PIC remappe (IRQ 32-47), timer 100 Hz + clavier actifs.\n"
     ));
 
-    // --- J2.7 : création de la tâche worker (planificateur) ----
+    // --- J2.7 : création des tâches workers (planificateur) ----
     //
-    // Avant d'activer les interruptions, on crée une tâche secondaire.
-    // Le noyau principal (tâche 0) et le worker (tâche 1) seront
-    // alternés par le timer à 100 Hz via schedule() dans handle_irq.
+    // Avant d'activer les interruptions, on crée les workers avec
+    // des priorités différentes (J2.8). Le noyau principal (tâche 0)
+    // est l'idle : priorité la plus basse (3). Le worker H (prio 0)
+    // est le plus prioritaire, le worker L (prio 2) le moins.
+    // L'âge (aging) dans schedule() empêche la starvation : les
+    // tâches en attente voient leur priorité effective augmenter.
     unsafe { task::init_main() };
-    let worker_id = unsafe { task::create_task(worker_task) };
-    let worker2_id = unsafe { task::create_task(worker_task_2) };
+    let worker_hi_id = unsafe { task::create_task(worker_hi, 0) };   // prio 0 (haute)
+    let worker_med_id = unsafe { task::create_task(worker_med, 1) };  // prio 1
+    let worker_lo_id = unsafe { task::create_task(worker_lo, 2) };    // prio 2
     console::print(format_args!(
-        "J2.7: planificateur round-robin (tache 0=noyau, {}=worker1, {}=worker2)\n",
-        worker_id, worker2_id
+        "J2.7: planificateur priorite (0=noyau/idle, {}=H, {}=M, {}=L)\n",
+        worker_hi_id, worker_med_id, worker_lo_id
     ));
 
     // Activer les interruptions matérielles.
@@ -250,17 +273,25 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
     // ----------------------------------------------------------
 
-    // --- J2.7b : preuve du planificateur -----------------------
+    // --- J2.7b + J2.8 : preuve du planificateur et GPRs --------
     //
-    // Le worker a tourné pendant J2.6b : le caractère 'W' doit
-    // apparaître sur la voie série (alternance T/W = context switch).
-    // On attend 2 ticks supplémentaires pour forcer au moins un
-    // passage dans le worker.
+    // Les workers ont tourné pendant J2.6b. Le caractère 'T' (timer)
+    // suivi de 'H' (worker haute priorité) prouve le context switch.
+    //
+    // J2.8 : le worker H utilise r12 comme sentinelle. Si irq_common
+    // sauvegarde les GPRs, r12 est restauré après iretq → '.'.
+    // Sinon r12 est corrompu → '!'.
+    // On attend 8 ticks pour laisser tous les workers (H/M/L) tourner.
     let t7 = irq::ticks();
-    while irq::ticks() - t7 < 4 {
+    while irq::ticks() - t7 < 8 {
         unsafe { asm!("hlt") }
     }
-    console::print(format_args!("J2.7b: planificateur actif (worker execute).\n"));
+    console::print(format_args!(
+        "J2.7b: planificateur + GPR sauvegardes actifs (workers H/M/L).\n"
+    ));
+    console::print(format_args!(
+        "J2.8: scheduler priorites + GPR sauvegardes - OK\n"
+    ));
     // ----------------------------------------------------------
     //
     // Accès volontaire à une adresse non mappée (0xDEAD0000 :

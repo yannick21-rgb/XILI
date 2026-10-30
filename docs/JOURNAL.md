@@ -5,6 +5,23 @@ décisions prises.
 
 ---
 
+## 2026-10-30 — Typo : binôme Inter + JetBrains Mono validé
+
+- Maquette comparatifs (`xili-design/specimen-typo.html`) : 4 binômes, contenus
+  réels du bureau, rendus en Chrome headless (capture à taille réelle).
+- Tous sous SIL OFL, couvrent les accents français. Départageurs testés :
+  `0/O`, `1/l/I`, 12 px. Inter sort par x-height 55 % (plus haute), JetBrains
+  Mono par x-height 55 % + 85 Ko de moins.
+- Décision : **Inter + JetBrains Mono**. §5 du DESIGN.md réécrit, en
+  corrigeant l'ambiguïté « œil bas / large x-height ».
+- Sous-ensembles livrés (`pyftsubset`, latin + FR + ponctuation + opérateurs) :
+  `assets/fonts/{inter,jetbrainsmono}-latin.woff2` + licences OFL.
+- Décision : icônes de fenêtre en SVG — `✕`, `⤢` et `≡` absents des polices ;
+  les sous-ensembles ont révélé un range Unicode trop étroit, et le reste
+  était dans les sources.
+
+---
+
 ## 2026-10-26 — J0 : cadrage et outillage
 
 - Workspace Cargo `no_std`, zéro dépendance externe.
@@ -365,10 +382,47 @@ décisions prises.
   Vérifié : `make test` (BIOS) et `make test-uefi` (ISO + ESP) passent.
   Log série montre `TWTJ2.6b…TWTTWTte=6` puis `TWTVTJ2.7b:`.
 
-- Reste : passer à J2.8 (priorités, tâches temps réel, ou SMP).
+- Reste : passer à J2.8 (priorités, tâche temps réel, ou SMP).
 - Risques : le switch de pile n'inclut pas encore les GPRs — les
   tâches partagent les registres généraux entre elles. Un vrai
   scheduler sauvegarde/restaure tous les registres (processus
   complet) — pas nécessaire pour le round-robin simple actuel car
   chaque tâche reprend sur son propre `iretq`, mais reste une limite.
-```
+
+---
+
+## 2026-10-29 — J2.8 : GPR complets + priorités avec aging
+
+- **`irq_common` (isr.s)** : sauvegarde et restauration des 15 GPRs
+  (rax–r15, sauf RSP) autour de l'appel à `handle_irq`. Push avant
+  l'appel, pop après. Le bloc GPR (120 octets) est en dessous de
+  l'interrupt frame sur la pile ; `saved_rsp` pointe sur le bloc GPR.
+- **`handle_irq` (irq.rs)** : signature changée de
+  `handle_irq(frame: *const ExceptionFrame)` à
+  `handle_irq(gpr_ptr: u64)`. L'interrupt frame est localisée à
+  `gpr_ptr + GPR_SAVE_SIZE` (120 octets). `schedule()` reçoit
+  `gpr_ptr` (pas `frame`) pour sauvegarder/restaurer `saved_rsp`.
+- **`task.rs`** : ajout du champ `age: u64` à `Task`. L'algorithme
+  `schedule()` utilise l'**âge** (aging) : priorité effective =
+  `priority - age` (arithmétique i64). Une tâche en attente voit sa
+  priorité effective baisser jusqu'à dépasser celle des tâches plus
+  prioritaires → fin par être sélectionnée. Anti-starvation.
+  - Premier bug : `saturating_sub` (u8) → une fois age > priority,
+    tout devient 0 et le worker H (prio 0) monopolise le CPU. Corrigé
+    avec `i64` (arithmetic signée).
+  - Deuxième bug (première tentative) : `handle_irq` lisait le vector
+    depuis le bloc GPR au lieu de l'interrupt frame → '?' sur la
+    série, kernel bloqué. Corrigé en calculant
+    `frame_ptr = gpr_ptr + GPR_SAVE_SIZE`.
+- **Workers** : 3 tâches avec priorités 0/1/2 (H/M/L). Worker H utilise
+  r12 comme sentinelle (0xDEAD_BEEF_CAFE_BABE) autour de `hlt` : si
+  les GPRs sont sauvegardés, on lit '.' après 'H' ; sinon '!'.
+  Log BIOS : `THTMTLT.HTMT…` — H le plus fréquent, M et L présents,
+  '.' (pas de '!') = GPRs préservés. Aucun worker ne tourne en
+  boucle infinie — l'aging ramène le kernel (prio 3) sur le pont
+  tous les ~5 ticks.
+- Vérifié : `make test` (BIOS) et `make test-uefi` (ISO + ESP) passent.
+- Risque restant : le switch ne sauvegarde pas XMM/SSE (16 registres
+  128 bits) — suffisant pour le round-robin, pas pour les threads
+  utilisateurs (J3). Le coût d'une save/restore complète (256 octets)
+  est noté pour J3.

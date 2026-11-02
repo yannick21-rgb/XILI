@@ -97,13 +97,36 @@ static mut TSS: Tss = Tss {
 
 static mut IST1_STACK: IstStack = IstStack { bytes: [0; 8192] };
 
-/// GDT complète du noyau.
+/// --- Sélecteurs de segment (GDT) ---
 ///
-///   [0] null      0x00  0x0000000000000000
-///   [1] code      0x08  0x00AF9A000000FFFF
-///   [2] données   0x10  0x00AF92000000FFFF
+///   [0] null      0x00
+///   [1] code R0   0x08  0x00AF9A000000FFFF (L=0 — CS non rechargée après lgdt, cf. ci-dessous)
+///   [2] données R0 0x10  0x00AF92000000FFFF
 ///   [3] TSS low   0x18  (mis à jour par init)
 ///   [4] TSS high  0x20  (mis à jour par init)
+///   [5] code R3   0x28  0x00BF_FA00_0000_FFFF (DPL=3, L=1, G=1)
+///   [6] données R3 0x30  0x00AF_F200_0000_FFFF (DPL=3)
+///   [7] code R0 64 0x38  0x00BF_9A00_0000_FFFF (DPL=0, L=1, G=1)
+pub const KERNEL_CS: u16 = 0x08;
+pub const KERNEL_DS: u16 = 0x10;
+/// Code segment 64-bit (L=1) pour syscall/iretq — sélecteur 0x38.
+/// Distinct de KERNEL_CS (0x08, L=0) : le noyau ne peut pas faire de
+/// far-jump pour recharger CS (higher-half), donc CS reste celui du
+/// bootloader. Les IRQ matériels continuent d'utiliser 0x08. Mais
+/// `syscall` (R0→R3) et iretq (R3→R0) doivent utiliser un segment
+/// 64-bit valide, d'où cette entrée supplémentaire [7].
+#[allow(dead_code)]
+pub const KERNEL_CS64: u16 = 0x38;
+#[allow(dead_code)]
+pub const TSS_SELECTOR: u16 = 0x18;
+pub const USER_CS: u16 = 0x28;
+pub const USER_DS: u16 = 0x30;
+
+/// GDT complète du noyau — 8 entrées de 8 octets (64 octets, alignés sur 8).
+///
+/// Les entrées [5] et [6] sont les segments anneau 3 (code/data DPL=3),
+/// utilisés par `sysret` pour revenir en mode utilisateur. Leurs sélecteurs
+/// (0x28 / 0x30) sont chargés par `sysret` depuis MSR_STAR.
 #[repr(C, align(8))]
 struct Gdt {
     entries: [u64; 8],
@@ -112,13 +135,13 @@ struct Gdt {
 static mut GDT: Gdt = Gdt {
     entries: [
         0x0000_0000_0000_0000, // [0] null
-        0x00AF_9A00_0000_FFFF, // [1] code  0x08
-        0x00AF_9200_0000_FFFF, // [2] données 0x10
-        0,                     // [3] TSS low  0x18
-        0,                     // [4] TSS high 0x20
-        0,                     // [5] libre
-        0,                     // [6] libre
-        0,                     // [7] libre
+        0x00AF_9A00_0000_FFFF, // [1] code R0  0x08 (exec/read, DPL=0, L=0 — CS bootloader)
+        0x00AF_9200_0000_FFFF, // [2] données R0 0x10 (data, DPL=0)
+        0,                     // [3] TSS low   0x18 (mis à jour par init)
+        0,                     // [4] TSS high  0x20
+        0x00BF_FA00_0000_FFFF, // [5] code R3   0x28 (exec/read 64-bit, DPL=3, L=1, G=1)
+        0x00AF_F200_0000_FFFF, // [6] donnees R3 0x30 (data, DPL=3)
+        0x00BF_9A00_0000_FFFF, // [7] code R0 64 0x38 (exec/read 64-bit, DPL=0, L=1, G=1)
     ],
 };
 

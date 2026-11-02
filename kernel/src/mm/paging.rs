@@ -62,15 +62,15 @@ pub const SCRATCH_VADDR: u64 = 0x0000_0080_0000_0000;
  * ------------------------------------------------------------ */
 
 /// Descripteur présent.
-const PRESENT: u64 = 1 << 0;
+pub const PRESENT: u64 = 1 << 0;
 /// Écriture autorisée.
-const WRITABLE: u64 = 1 << 1;
+pub const WRITABLE: u64 = 1 << 1;
 /// Grande page : le descripteur PD pointe directement la page.
-const HUGE: u64 = 1 << 7;
+pub const HUGE: u64 = 1 << 7;
 /// Page globale, non invalidée par un changement de CR3.
-const GLOBAL: u64 = 1 << 8;
+pub const GLOBAL: u64 = 1 << 8;
 /// Exécution interdite.
-const NOEXEC: u64 = 1 << 63;
+pub const NOEXEC: u64 = 1 << 63;
 
 /// Masque des bits d'adresse physique (12..51).
 const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
@@ -80,15 +80,15 @@ const FLAG_MASK: u64 = 0x8000_0000_0000_01FF;
 /// Nombre de descripteurs par table.
 pub const ENTRIES: usize = 512;
 
-/// Drapeaux d'une page du noyau : présente, inscriptible, globale.
+/// Drapeaux d'une page du noyau : présent, inscriptible, globale,
+/// **user-accessible** (U bit à 1).
 ///
-/// Globale : le descripteur survit à un changement de CR3. Les pages
-/// du noyau restent mappées en permanence, inutile de les recharger
-/// dans le TLB à chaque bascule.
-///
-/// Valable pour une page mappée — grande page incluse. **Pas** pour un
-/// descripteur qui pointe vers une table : voir [`LINK`].
-const KERNEL_PAGE: u64 = PRESENT | WRITABLE | GLOBAL;
+/// Le bit U/S (user/supervisor) est mis a 1 car le test J3.2 entre en
+/// anneau 3 : le code utilisateur (ring3_test_func) et la pile doivent
+/// être accessibles depuis le CPL 3. Dans un vrai noyau, seules les
+/// pages partagées avec l'utilisateur porteraient ce bit.
+pub const USER: u64 = 1 << 2;
+const KERNEL_PAGE: u64 = PRESENT | WRITABLE | GLOBAL | USER;
 
 /// Drapeaux d'un descripteur de table (PML4E, PDPTE, PDE vers une PT).
 ///
@@ -97,7 +97,12 @@ const KERNEL_PAGE: u64 = PRESENT | WRITABLE | GLOBAL;
 /// 8 à 11 sont réservés à zéro — les poser déclenche une faute de page
 /// « reserved bit violation » pendant le parcours, signalée par le bit
 /// RSV du code d'erreur (0x0a : absent, écriture, RSV).
-const LINK: u64 = PRESENT | WRITABLE;
+///
+/// Le bit USER (U/S) est activé : le noyau entre en ring 3 pour le test
+/// J3.2, et le parcours à 4 niveaux vérifie U/S à CHAQUE niveau. Un
+/// intermédiaire sans ce bit déclenche une #PF même si la page finale
+/// est user-accessible.
+const LINK: u64 = PRESENT | WRITABLE | USER;
 
 /// Drapeaux d'une page de données : en plus, exécution interdite.
 ///
@@ -574,5 +579,92 @@ pub fn verify() {
         } else {
             console::print(format_args!("  page 4 Kio : ECHEC (deux pages differentes)\n"));
         }
+    }
+}
+
+/* ------------------------------------------------------------
+ * map_page — mappage dynamique d'une page 4 Kio (J3.3)
+ * ------------------------------------------------------------ */
+
+/// Mappe une page de 4 Kio à `vaddr` avec l'adresse physique `paddr`.
+///
+/// Parcourt la hiérarchie depuis la PML4 globale. Alloue les tables
+/// intermédiaires (PDPT/PD/PT) via l'allocateur physique bitmap. Si
+/// une grande page de 2 Mio occupe le créneau, elle est divisée en
+/// 512 pages de 4 Kio héritant des anciens drapeaux (moins HUGE).
+///
+/// # Sécurité
+///
+/// Ne pas appeler depuis les IRQ (AI-WORKFLOW §6). PSL = 0 requis
+/// (instruction `invlpg` privilégiée).
+pub unsafe fn map_page(vaddr: u64, paddr: u64, flags: u64) {
+    let pml4 = &mut *core::ptr::addr_of_mut!(PML4);
+
+    // --- PML4 → PDPT ---
+    let pml4e = pml4.entry(pml4_index(vaddr));
+    let pdpt = if pml4e.is_present() {
+        pml4e.addr() as *mut PageTable
+    } else {
+        let page = crate::mm::phys::alloc_page()
+            .expect("map_page: OOM PDPT") as u64;
+        core::ptr::write_bytes(page as *mut u8, 0, PAGE_SIZE);
+        pml4.set(pml4_index(vaddr), Entry::new(page, LINK));
+        page as *mut PageTable
+    };
+    let pdpt = &mut *pdpt;
+
+    // --- PDPT → PD ---
+    let pdpte = pdpt.entry(pdpt_index(vaddr));
+    let pd = if pdpte.is_present() && !pdpte.is_huge() {
+        pdpte.addr() as *mut PageTable
+    } else if pdpte.is_present() && pdpte.is_huge() {
+        // Une grande page au niveau PDPT est invalide sur x86-64.
+        unreachable!("PDPT entry should not have HUGE bit set");
+    } else {
+        let page = crate::mm::phys::alloc_page()
+            .expect("map_page: OOM PD") as u64;
+        core::ptr::write_bytes(page as *mut u8, 0, PAGE_SIZE);
+        pdpt.set(pdpt_index(vaddr), Entry::new(page, LINK));
+        page as *mut PageTable
+    };
+    let pd = &mut *pd;
+
+    // --- PD → PT ---
+    let pde = pd.entry(pd_index(vaddr));
+    let pt = if pde.is_present() && !pde.is_huge() {
+        // PD pointe déjà vers une PT existante.
+        pde.addr() as *mut PageTable
+    } else if pde.is_present() && pde.is_huge() {
+        // Diviser la grande page 2 Mio en 512 pages de 4 Kio.
+        let base = pde.addr();
+        let old_flags = pde.flags() & !HUGE;
+        let page = crate::mm::phys::alloc_page()
+            .expect("map_page: OOM PT") as u64;
+        let new_pt = &mut *(page as *mut PageTable);
+        for i in 0..ENTRIES {
+            new_pt.set(i, Entry::new(
+                base + (i as u64) * PAGE_SIZE as u64,
+                old_flags,
+            ));
+        }
+        pd.set(pd_index(vaddr), Entry::new(page, LINK));
+        page as *mut PageTable
+    } else {
+        let page = crate::mm::phys::alloc_page()
+            .expect("map_page: OOM PT") as u64;
+        core::ptr::write_bytes(page as *mut u8, 0, PAGE_SIZE);
+        pd.set(pd_index(vaddr), Entry::new(page, LINK));
+        page as *mut PageTable
+    };
+    let pt = &mut *pt;
+
+    // --- Posée de l'entrée 4 Kio finale ---
+    pt.set(pt_index(vaddr), Entry::new(paddr, flags));
+
+    // Invalidation TLB ciblée : on invalide uniquement la page qu'on
+    // vient de mapper, sans toucher au reste du TLB.
+    unsafe {
+        core::arch::asm!("mfence", options(nostack));
+        core::arch::asm!("invlpg [{}]", in(reg) vaddr, options(nostack));
     }
 }

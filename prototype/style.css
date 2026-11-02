@@ -146,7 +146,7 @@ body.sans-animations *::after {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  height: calc(var(--hit) - 4px);
+  height: var(--hit);
   padding: 0 var(--sp-2);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
@@ -177,6 +177,7 @@ body.sans-animations *::after {
 .barre-systeme[data-coupe="true"] #icone-volume .croix { display: block; }
 .barre-systeme:not([data-coupe="true"]) #icone-volume .ondes { display: block; }
 .barre-systeme[data-wifi="false"] #icone-wifi path:first-child { display: none; }   /* grand arc retiré quand déconnecté */
+#icone-wifi circle { fill: currentColor; }
 .barre-systeme[data-wifi="false"] #icone-wifi circle { opacity: .35; }
 #icone-batterie .niveau { fill: currentColor; stroke: none; }
 #icone-batterie .borne { fill: none; stroke: currentColor; stroke-width: 1.4; }
@@ -187,6 +188,7 @@ body.sans-animations *::after {
 .alerte { color: var(--primary) !important; }
 
 /* Popover réglages rapides : carte resserrée, élévée sans ombre (§6) */
+.popover-systeme[hidden] { display: none; }
 .popover-systeme {
   position: fixed;
   top: calc(var(--barre-h) + 4px);
@@ -207,6 +209,7 @@ body.sans-animations *::after {
 .pop-bascule[aria-pressed="true"] { color: var(--text); }
 .pop-txt { border: none; background: none; color: var(--text-dim); }
 .pop-pourcent { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pop-niveau { font-family: var(--font-mono); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .popover-systeme input[type="range"] {
   width: 100%;
   accent-color: var(--primary);
@@ -234,6 +237,9 @@ body.sans-animations *::after {
 }
 
 .barre-tache {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
   height: calc(var(--hit) - 4px);
   padding: 0 var(--sp-3);
   border: 1px solid var(--rule);
@@ -244,6 +250,9 @@ body.sans-animations *::after {
   transition: color var(--dur-fast) var(--easing),
               border-color var(--dur-fast) var(--easing);
 }
+.tache-icone { width: 12px; height: 12px; flex: none;
+               fill: none; stroke: currentColor; stroke-width: 1.4;
+               stroke-linecap: round; stroke-linejoin: round; }
 
 .barre-tache:hover { color: var(--text); }
 .barre-tache.active { color: var(--text); border-color: var(--lisiere); }
@@ -633,6 +642,13 @@ input[type="color"] {
 
 /* --- À propos ------------------------------------------------------------------ */
 
+/* Applications secondaires : panneaux de liste (§10.8, aplats uniquement) */
+.app-mock { padding: var(--sp-4); }
+.app-mock h3 { font-size: var(--text-md); font-weight: 500; margin: 0 0 var(--sp-3); }
+.app-mock-ligne { display: flex; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--rule); font-size: var(--text-sm); }
+.app-mock-ligne:first-child { border-top: none; }
+.app-mock-vide { padding: var(--sp-2) 0; color: var(--text-dim); font-size: var(--text-sm); }
+.app-mock .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .propos { padding: var(--sp-5); max-width: 480px; }
 
 .propos h1 { font-size: var(--text-lg); font-weight: 500; margin-bottom: var(--sp-3); }

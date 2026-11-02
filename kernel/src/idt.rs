@@ -71,6 +71,10 @@ pub struct IdtEntry {
 
 impl IdtEntry {
     /// Sélecteur de code noyau.
+    /// 0x08 — garde L=0 (hérité du bootloader ; le noyau ne peut pas
+    /// far-jump pour recharger CS en higher-half). Utilisé par toutes les
+    /// entrées IDT (timer, exceptions). Le handler `syscall` utilise à
+    /// la place KERNEL_CS64 (0x38, L=1) via IA32_STAR.
     const CODE_SELECTOR: u16 = 0x08;
 
     /// Construit une entrée pointant vers `handler`.

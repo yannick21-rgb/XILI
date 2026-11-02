@@ -5,7 +5,9 @@ use core::arch::{asm, global_asm};
 use core::panic::PanicInfo;
 
 mod console;
+mod elf;
 mod idt;
+mod initrd;
 mod io;
 mod irq;
 mod mbi;
@@ -13,12 +15,17 @@ mod mm;
 mod pic;
 mod runtime;
 mod serial;
+mod syscall;
 mod task;
 mod tss;
 mod vga;
 
 global_asm!(include_str!("boot.s"), options(att_syntax));
 global_asm!(include_str!("isr.s"), options(att_syntax));
+
+extern "C" {
+    fn entry_ring3(rip: u64, rsp: u64) -> !;
+}
 
 const MULTIBOOT2_BOOTLOADER_MAGIC: u32 = 0x36d7_6289;
 
@@ -73,6 +80,20 @@ extern "C" fn worker_lo() -> ! {
         crate::serial::write_byte(b'L');
         unsafe { asm!("hlt") }
     }
+}
+
+/// Point d'arrivee en R0 apres le test syscall (J3.2).
+#[no_mangle]
+extern "C" fn ring0_after_test() -> ! {
+    crate::console::print(format_args!("J3.2: retour R0 via iretq apres syscall - OK\n"));
+    loop { unsafe { asm!("hlt") } }
+}
+
+/// Point d'arrivee apres un page-fault volontaire (J3.2).
+#[no_mangle]
+extern "C" fn pf_test() -> ! {
+    crate::console::print(format_args!("J3.2: page-fault volontaire - OK\n"));
+    loop { unsafe { asm!("hlt") } }
 }
 
 #[no_mangle]
@@ -311,30 +332,67 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         "J2.8: scheduler priorites + GPR sauvegardes - OK\n"
     ));
     // ----------------------------------------------------------
-    //
-    // Accès volontaire à une adresse non mappée (0xDEAD0000 :
-    // ni dans l'identity map 0..1 Gio, ni dans le higher-half).
-    // Le handler #PF doit intercepter la faute, imprimer le
-    // diagnostic (CR2, code d'erreur) et bloquer — PAS de triple
-    // fault. Le test passera si le log contient « #PF ».
+    console::print(format_args!("J3.2: configuration MSR + GDT segments R3...\n"));
+    unsafe { syscall::init() };
     console::print(format_args!(
-        "J2.5b: test #PF — acces a 0xDEAD0000 (page non mappee)...\n"
+        "J3.2: configuration MSR (EFER/STAR/LSTART/FMASK) + GDT R0/R3 OK\n"
     ));
-    unsafe {
-        core::ptr::write_volatile(0xDEAD_0000 as *mut u64, 0x1234_5678_9ABC_DEF0u64);
-    }
-    // ----------------------------------------------------------
-    console::print(format_args!("Le systeme est en halt. Ctrl+Alt+Suppr pour quitter QEMU.\n"));
 
-    loop {
-        unsafe { asm!("hlt") }
-    }
+    // --- J3.5 : INITRD (archive cpio newc) -----------------------------
+    static INITRD_ARCHIVE: &[u8] = include_bytes!("../../assets/initrd.cpio");
+    crate::initrd::init(INITRD_ARCHIVE);
+
+    #[repr(C, align(16))]
+    struct AlignedStack([u8; 8192]);
+    static mut RING3_STACK: AlignedStack = AlignedStack([0; 8192]);
+    let user_stack = core::ptr::addr_of!(RING3_STACK) as u64;
+    let user_stack_top = user_stack + 8192;
+    console::print(format_args!(
+        "  user stack = {:#018x} (top = {:#018x})\n",
+        user_stack as u64, user_stack_top as u64
+    ));
+    console::print(format_args!("  entree R3: iretq -> CS=0x2B SS=0x33\n"));
+
+    // Lance busybox depuis l'initrd (J4 bootstrap).
+    run_initrd_elf("busybox")
+}
+
+fn run_initrd_elf(name: &str) -> ! {
+    let name_bytes = name.as_bytes();
+    let elf_data = match crate::initrd::find(name_bytes) {
+        Some((data, size)) => unsafe { core::slice::from_raw_parts(data, size) },
+        None => {
+            console::print(format_args!(
+                "J3.5: ECHEC — '{}' introuvable dans l'initrd\n",
+                name
+            ));
+            loop { unsafe { asm!("hlt") } }
+        }
+    };
+
+    console::print(format_args!("J3.5: chargement de '{}' depuis l'initrd...\n", name));
+    let elf_info = match unsafe { elf::load_elf(elf_data) } {
+        Some(info) => info,
+        None => {
+            console::print(format_args!("J3.5: ECHEC — ELF invalide\n"));
+            loop { unsafe { asm!("hlt") } }
+        }
+    };
+
+    let stack_top = unsafe { elf::build_stack(0x100_0000, 4, name, &elf_info) };
+
+    console::print(format_args!(
+        "  ELF entre  = {:#018x} ({} octets)\n",
+        elf_info.entry, elf_data.len()
+    ));
+    console::print(format_args!("  execution en R3 via iretq...\n"));
+
+    unsafe { entry_ring3(elf_info.entry, stack_top) };
+    loop { unsafe { asm!("hlt") } }
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     console::print(format_args!("\n*** PANIC ***\n{}\n", info));
-    loop {
-        unsafe { asm!("hlt") }
-    }
+    loop { unsafe { asm!("hlt") } }
 }

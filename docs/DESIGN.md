@@ -384,7 +384,7 @@ de la maquette.
 
 | Zone | Contenu |
 |---|---|
-| Gauche | Menu XILI (démarreur, thème, animations, préférences) |
+| Gauche | Menu XILI (démarreur, thème, animations, préférences, état système : son, réseau, paramètres rapides) |
 | Centre | Tâches : une entrée par fenêtre ouverte ; l'active est marquée au filet `primary` |
 | Droite | Indicateurs système (volume, Wi-Fi, batterie — §10.7), bascule de thème, horloge (mono, `text-xs`) |
 
@@ -531,7 +531,7 @@ dans la barre droite, le réglage vit dans un popover.
 |---|---|---|
 | **Volume** | icône à deux états (coupé / niveau), `primary` si coupé | curseur 0–100 + bascule coupé/découpé |
 | **Wi-Fi** | icône connecté/déconnecté, `primary` si perdu | bascule connecté / hors réseau |
-| **Batterie** | icône avec niveau, `primary` sous 20 % | curseur 0–100 |
+| **Batterie** | icône avec niveau, `primary` sous 20 % | **lecture seule** — la charge appartient au poste, pas au système |
 | **Luminosité** | — (pas un état pertinent à lire en permanence) | curseur 0–100, superpose un voile sur le bureau |
 
 #### Règles
@@ -555,6 +555,45 @@ dans la barre droite, le réglage vit dans un popover.
 - **Aplats seulement** : le popover est `surface` + filet `rule`, élévation
   sans ombre (§6). Le voile de luminosité est un aplat
   `pointer-events: none`, opacité `1 − luminosité / 100`.
+
+#### Icônes d'applications (décision 2026-10-31)
+
+Le dock étant **refusé** (§10.1), les seules surfaces qui portent des
+icônes d'applications sont la **barre des tâches** (§10.3) et les épingles.
+
+- **Glyphes système absents** : les écrans, volets et fenêtres « génériques »
+  n'ont pas de correspondance dans Inter / JetBrains Mono — cf. §5.1. Toute
+  icône d'application se dessine en SVG inline.
+- **Familles de glyphes** : terminal (cadre arrondi + pastille remplie
+  `currentColor`), dossier (contour arrondi + base). La **forme porte
+  l'état** : un glyphe ouvert est en trait, l'état « actif/corps » est en
+  remplissage ponctuel.
+- **Géométrie** : `viewBox 0 0 12 12`, trait fin `1.4`, `stroke-linejoin:
+  round`, `stroke-linecap: round`, rayons multiples de 4 px (2.2/0.9/0.4).
+- **Taille** : 12 px dans la barre des tâches, 13 px pour les indicateurs
+  système (§10.7).
+- **Couleur** : `currentColor` — Ivoire (`--text`) quand l'application est
+  active, `--text-dim` (`--inactif`) sinon. Jamais d'accent dans le glyphe :
+  l'accent est le filet de sélection (§10.2).
+
+Mapping prototype `ICONE_PAR_TITRE` : `Terminal → terminal`, `Fichiers →
+fichiers`. Ajouter une application = ajouter une entrée, jamais un glyphe
+spécifique au système d'exploitation cible.
+
+### 10.8 Applications du bureau
+
+Les applications du bureau ouvertes en maquette :
+
+- **Terminal**: xili >, sorties scrollables, commandes.
+- **Fichiers**: gestionnaire, arbres, lieux, glisser-deposer vers le bureau.
+- **Ce PC ou ordinateur**: postes et peripheriques.
+- **Reseau**: interfaces (Wi-Fi, Ethernet, Bluetooth).
+- **Corbeille**: objets supposes supprimes.
+- **Dossier**: dossier ouvert via le gestionnaire.
+
+Chaque application est ouverte par une fenetre (`ouvrirFenetre`) et porte une
+icone SVG dediee dans `ICONE_PAR_TITRE` (section 10.7), dessinee dans le meme
+langage que les controles.
 
 ---
 

@@ -56,6 +56,42 @@ let zSuivant = 100;
 
 const TAILLE_DEFAUT = { w: 560, h: 380 };
 
+/* Icônes d'applications (SVG inline, ligne fine, arrondie — style XILI) pour
+   la barre des tâches. Les glyphes génériques des systèmes d'exploitation
+   n'existent pas dans Inter / JetBrains Mono ; les icônes vectorielles
+   portent tel quelles vers le J7 (§10.7). */
+const ICONE_PAR_TITRE = {
+  Terminal: "terminal",
+  Fichiers: "fichiers",
+  "Ce PC ou ordinateur": "pc",
+  Réseau: "reseau",
+  Corbeille: "corbeille",
+  Dossier: "dossier",
+};
+
+function creerIconeApp(nom) {
+  const defs = {
+    terminal: '<rect x="2.2" y="3.8" width="7.6" height="4.6" rx="0.9" fill="none"/>' +
+               '<rect x="3.4" y="5.2" width="5.2" height="2.2" rx="0.4" fill="currentColor"/>',
+    fichiers: '<path d="M2.8 6.4 L2.8 3.4 C2.8 2.6 3.4 2 4.2 2 L8.2 2 L9.2 3.2 L9.2 6.4 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>' +
+               '<path d="M2.8 6.4 H9.2 V10 H2.8 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
+    dossier: '<path d="M2.8 6.4 L2.8 3.4 C2.8 2.6 3.4 2 4.2 2 L8.2 2 L9.2 3.2 L9.2 6.4 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>' +
+               '<path d="M2.8 6.4 H9.2 V10 H2.8 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
+    pc: '<rect x="2.8" y="3" width="6.4" height="5" rx="0.8" fill="none"/>' +
+        '<path d="M5.2 8.2 V9.6 H6.8 V8.2" fill="none" stroke="currentColor" stroke-width="1.2"/>',
+    reseau: '<circle cx="6" cy="6" r="2.8" fill="none"/>' +
+            '<path d="M3.3 6 H8.7" fill="none" stroke="currentColor" stroke-width="1.2"/>',
+    corbeille: '<rect x="2.9" y="4.2" width="6.2" height="0.9" rx="0.3" fill="none"/>' +
+              '<rect x="3.5" y="5.1" width="5.0" height="4.1" rx="0.8" fill="none"/>',
+  };
+  const ico = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  ico.setAttribute("class", "tache-icone");
+  ico.setAttribute("viewBox", "0 0 12 12");
+  ico.setAttribute("aria-hidden", "true");
+  ico.innerHTML = defs[nom] || defs.terminal;
+  return ico;
+}
+
 function ouvrirFenetre(titre, contenu, opts = {}) {
   if (!opts.multi) {
     for (const [id, f] of fenetres) {
@@ -91,7 +127,8 @@ function ouvrirFenetre(titre, contenu, opts = {}) {
   el.addEventListener("animationend", () => el.classList.remove("ouverte"), { once: true });
 
   fenetres.set(id, { el, corps, titre, maximisee: false, minimisee: false,
-                     flottante: false, geo: null });
+                     flottante: false, geo: null, posFlottante: null,
+                     icone: ICONE_PAR_TITRE[titre] || "terminal" });
   bureau.appendChild(el);
   installerFenetre(id);
   focusFenetre(id);
@@ -194,6 +231,7 @@ function installerFenetre(id) {
     if (el.classList.contains("en-mosaique")) {
       f.flottante = true;
       el.classList.remove("en-mosaique");
+      f.posFlottante = null;   // maintenant flottante : sa position est sa position
       mosaiqueRetirer(id);
       appliquerMosaique();
     }
@@ -433,6 +471,10 @@ function appliquerMosaique() {
   for (const [id, r] of rects) {
     const f = fenetres.get(id);
     if (!f) continue;
+    // Mémorise la position flottante (elle sera restaurée au désactiver) —
+    // AVANT d'écraser les styles par le tuilage.
+    f.posFlottante = { left: f.el.style.left, top: f.el.style.top,
+                       width: f.el.style.width, height: f.el.style.height };
     Object.assign(f.el.style, {
       left: r.x + "px", top: r.y + "px",
       width: r.w + "px", height: r.h + "px",
@@ -456,7 +498,14 @@ function basculerMosaique(force) {
     }
     appliquerMosaique();
   } else {
-    for (const [, f] of fenetres) f.el.classList.remove("en-mosaique");
+    // Désactivation : les fenêtres reviennent à leurs positions d'origine
+    // (flottantes ou de démarrage) — la restauration utilise les valeurs
+    // mémorisées au moment du dernier placement (§10.6).
+    for (const [, f] of fenetres) {
+      f.el.classList.remove("en-mosaique");
+      if (f.posFlottante) Object.assign(f.el.style, f.posFlottante);
+      f.posFlottante = null;
+    }
     racineMosaique = null;
   }
   majIndicateurMosaique();
@@ -488,7 +537,8 @@ function majBarreTaches() {
   for (const [id, f] of fenetres) {
     const b = document.createElement("button");
     b.className = "barre-tache";
-    b.textContent = f.titre;
+    b.appendChild(creerIconeApp(f.icone));
+    b.appendChild(document.createTextNode(f.titre));
     if (id === idActif) b.classList.add("active");
     if (f.minimisee) b.classList.add("minimisee");
     b.addEventListener("click", () => {
@@ -534,10 +584,10 @@ const pourcentLuminosite = $("#pourcent-luminosite");
 const pourcentBatterie = $("#pourcent-batterie");
 const pourcentBatteriePop = $("#pourcent-batterie-pop");
 const ctlVolume = $("#ctl-volume");
-const ctlBatterie = $("#ctl-batterie");
 const ctlLuminosite = $("#ctl-luminosite");
 const ctlSonCoupe = $("#ctl-son-coupe");
 const ctlWifi = $("#ctl-wifi");
+const battNiveau = $("#batt-niveau");
 
 function majSysteme() {
   boutonSysteme.dataset.coupe = String(etatSyst.sonCoupe);
@@ -552,15 +602,24 @@ function majSysteme() {
   $("#icone-volume").classList.toggle("alerte", etatSyst.sonCoupe);
   $("#icone-wifi").classList.toggle("alerte", !etatSyst.wifi);
   $("#icone-batterie").classList.toggle("alerte", etatSyst.batterie < 20);
+  battNiveau.classList.toggle("alerte", etatSyst.batterie < 20);
   pourcentBatterie.classList.toggle("alerte", etatSyst.batterie < 20);
 
   // Popover en phase avec l'état.
   ctlVolume.value = etatSyst.volume;
-  ctlBatterie.value = etatSyst.batterie;
   ctlLuminosite.value = etatSyst.luminosite;
   ctlSonCoupe.setAttribute("aria-pressed", String(etatSyst.sonCoupe));
+  ctlSonCoupe.textContent = etatSyst.sonCoupe ? "coupé" : "activé";
   ctlWifi.textContent = etatSyst.wifi ? "connecté" : "hors réseau";
   ctlWifi.setAttribute("aria-pressed", String(!etatSyst.wifi));
+
+  // Libellés du menu XILI (§10.7).
+  $("#etat-son").textContent = etatSyst.sonCoupe ? "coupé" : "activé";
+  $("#etat-reseau").textContent = etatSyst.wifi ? "connecté" : "hors réseau";
+
+  // Batterie : **lecture seule** — le niveau appartient au poste (§10.7),
+  // il ne se met pas en rétrograde. Affichage + alerte seulement.
+  battNiveau.textContent = etatSyst.batterie + " %";
 
   // Voile de luminosité : aplat, opacité inverse du réglage.
   voileLuminosite.style.opacity = String(1 - etatSyst.luminosite / 100);
@@ -595,10 +654,6 @@ ctlSonCoupe.addEventListener("click", () => {
 });
 ctlWifi.addEventListener("click", () => {
   etatSyst.wifi = !etatSyst.wifi;
-  majSysteme();
-});
-ctlBatterie.addEventListener("input", () => {
-  etatSyst.batterie = Number(ctlBatterie.value);
   majSysteme();
 });
 ctlLuminosite.addEventListener("input", () => {
@@ -677,11 +732,24 @@ menu.addEventListener("click", (e) => {
   switch (item.dataset.action) {
     case "terminal": ouvrirTerminal(); break;
     case "fichiers": ouvrirFichiers(); break;
+    case "cepcou": ouvrirCePcOuOrdinateur(); break;
+    case "reseauapp": ouvrirReseau(); break;
+    case "corbeille": ouvrirCorbeille(); break;
+    case "dossier": ouvrirDossier(); break;
     case "animations":
       animationsActives = !animationsActives;
       majAnimations();
       break;
     case "mosaique": basculerMosaique(); break;
+    case "son":
+      etatSyst.sonCoupe = !etatSyst.sonCoupe;
+      majSysteme();
+      break;
+    case "reseau":
+      etatSyst.wifi = !etatSyst.wifi;
+      majSysteme();
+      break;
+    case "parametres": ouvrirPopover(true); break;
     case "restart": reinitialiserBureau(); break;
     case "propos": ouvrirPropos(); break;
   }
@@ -893,7 +961,7 @@ const ARBRE = {
 
 const LIEUX = [["/", "Accueil"], ["/documents", "Documents"], ["/images", "Images"], ["/systeme", "Système"]];
 
-function ouvrirFichiers(depart) {
+function ouvrirFichiers(depart, titre = "Fichiers") {
   const el = creerElement(`
     <div class="fichiers">
       <nav class="fichiers-lieux" aria-label="Lieux"></nav>
@@ -951,8 +1019,44 @@ function ouvrirFichiers(depart) {
   }
 
   dessiner();
-  ouvrirFenetre("Fichiers", el, { w: 620, h: 400 });
+  ouvrirFenetre(titre, el, { w: 620, h: 400 });
 }
+
+/* --- Applications secondaires du bureau (décision DESIGN §10.8) ------------------------ */
+
+function ouvrirCePcOuOrdinateur() {
+  const el = creerElement(`
+    <div class="app-mock">
+      <h3>Postes et périphériques</h3>
+      <div class="app-mock-ligne"><span>Micro XILI — poste de travail</span><span class="mono">192,168,1,42</span></div>
+      <div class="app-mock-ligne"><span>Station de travail — station hôte</span><span class="mono">en veille</span></div>
+      <div class="app-mock-ligne"><span>Dock USB-C — deux ports libres</span><span class="mono">—</span></div>
+    </div>`);
+  ouvrirFenetre("Ce PC ou ordinateur", el, { w: 480, h: 300 });
+}
+
+function ouvrirReseau() {
+  const el = creerElement(`
+    <div class="app-mock">
+      <h3>Interfaces</h3>
+      <div class="app-mock-ligne"><span>Wi-Fi — XILI</span><span class="mono">192.168.1.42 · actif</span></div>
+      <div class="app-mock-ligne"><span>Bluetooth — XILI</span><span class="mono">désactivé</span></div>
+      <div class="app-mock-ligne"><span>Éthernet — dock</span><span class="mono">libre</span></div>
+    </div>`);
+  ouvrirFenetre("Réseau", el, { w: 420, h: 260 });
+}
+
+function ouvrirCorbeille() {
+  const el = creerElement(`
+    <div class="app-mock">
+      <h3>Corbeille</h3>
+      <div class="app-mock-ligne"><span>brouillon-plan.md</span><span class="mono">8 Ko</span></div>
+      <div class="app-mock-ligne"><span>photo-plan.png</span><span class="mono">2 Ko</span></div>
+    </div>`);
+  ouvrirFenetre("Corbeille", el, { w: 420, h: 260 });
+}
+
+function ouvrirDossier(depart = "/documents") { ouvrirFichiers(depart, "Dossier"); }
 
 // Déposer sur le bureau → épingle (§10.3 : tout se pose sur le bureau).
 bureau.addEventListener("dragover", (e) => e.preventDefault());

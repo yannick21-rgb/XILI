@@ -31,19 +31,20 @@
     <button id="bouton-systeme" class="barre-bouton barre-systeme" aria-haspopup="true" aria-expanded="false"
             title="Réglages rapides (volume, Wi-Fi, batterie, luminosité)">
       <svg class="sys-icone" id="icone-volume" viewBox="0 0 12 12" aria-hidden="true">
-        <path d="M2 4.5 L4 4.5 L7 2 L7 10 L4 7.5 L2 7.5 Z"/>
-        <path class="ondes" d="M9 4.5 C10.2 5.5 10.2 6.5 9 7.5"/>
-        <path class="croix" d="M8.2 4.6 L10.8 7.4 M10.8 4.6 L8.2 7.4" fill="none"/>
+        <rect x="2.5" y="3.6" width="7.4" height="4.8" rx="1.6" fill="none"/>
+        <path d="M6.1 5.4 L8 3.3 L8 8.7 Z" fill="currentColor"/>
+        <path class="ondes" d="M9.3 4.9 C10.2 5.8 10.2 6.2 9.3 7.1"/>
+        <path class="croix" d="M8.3 4.7 L10.7 7.3 M10.7 4.7 L8.3 7.3" fill="none"/>
       </svg>
       <svg class="sys-icone" id="icone-wifi" viewBox="0 0 12 12" aria-hidden="true">
-        <path d="M1 4.6 C4 1.8 8 1.8 11 4.6"/>
-        <path d="M2.6 6.6 C4.8 4.7 7.2 4.7 9.4 6.6"/>
-        <circle cx="6" cy="9.4" r="1" class="point"/>
+        <path d="M1.5 5.2 C3.8 2.6 8 2.6 10.3 5.2"/>
+        <path d="M3.2 6.9 C4.9 5.3 7.1 5.3 8.8 6.9"/>
+        <circle cx="6" cy="9.2" r="0.9"/>
       </svg>
       <svg class="sys-icone" id="icone-batterie" viewBox="0 0 12 12" aria-hidden="true">
-        <rect x="1" y="3.5" width="9" height="5" rx="1"/>
-        <path d="M10.6 5 L10.6 7" fill="none" class="borne"/>
-        <rect class="niveau" x="2" y="4.5" width="7" height="3" rx="0.5"/>
+        <rect x="1" y="3.5" width="9" height="5.4" rx="1.2" fill="none"/>
+        <rect x="10.2" y="5" width="0.9" height="2" rx="0.3" fill="currentColor"/>
+        <rect class="niveau" x="2" y="4.5" width="7" height="3" rx="0.8"/>
       </svg>
       <span id="pourcent-batterie" class="barre-pourcent">--%</span>
     </button>
@@ -60,6 +61,10 @@
 <nav id="menu" class="menu" hidden aria-label="Menu principal">
   <button class="menu-item" data-action="terminal">Ouvrir le terminal <span>Ctrl+Alt+T</span></button>
   <button class="menu-item" data-action="fichiers">Ouvrir les fichiers <span>Ctrl+Alt+F</span></button>
+  <button class="menu-item" data-action="cepcou">Ouvrir le PC ou ordinateur</button>
+  <button class="menu-item" data-action="reseauapp">Ouvrir le réseau</button>
+  <button class="menu-item" data-action="corbeille">Ouvrir la corbeille</button>
+  <button class="menu-item" data-action="dossier">Ouvrir le dossier</button>
   <hr class="menu-filet">
   <div class="menu-bloc">
     <span class="menu-libelle">Lisière de la fenêtre active</span>
@@ -72,6 +77,9 @@
   </div>
   <hr class="menu-filet">
   <button class="menu-item" data-action="animations">Animations&nbsp;: <span id="etat-animations">actives</span></button>
+  <button class="menu-item" data-action="son">Son : <span id="etat-son">activé</span></button>
+  <button class="menu-item" data-action="reseau">Réseau : <span id="etat-reseau">connecté</span></button>
+  <button class="menu-item" data-action="parametres">Paramètres système…</button>
   <button class="menu-item" data-action="mosaique">Mosaïque automatique <span>Ctrl+Alt+M</span></button>
   <button class="menu-item" data-action="restart">Réinitialiser le bureau</button>
   <hr class="menu-filet">
@@ -92,7 +100,7 @@
   </div>
   <div class="pop-ligne">
     <span class="pop-libelle">Batterie</span>
-    <input type="range" id="ctl-batterie" min="0" max="100" value="78" aria-label="Batterie">
+    <span id="batt-niveau" class="pop-niveau">78 %</span>
     <span id="pourcent-batterie-pop" class="pop-pourcent">78 %</span>
   </div>
   <div class="pop-ligne">
@@ -135,6 +143,6 @@
   </section>
 </template>
 
-<script src="app.js"></script>
+<script src="app.js?v=20261031-icones"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@
 use crate::io::outb;
 use crate::io::inb;
 
-const COM1: u16 = 0x3F8;
+pub const COM1: u16 = 0x3F8;
 
 pub fn init() {
     outb(COM1 + 1, 0x00); // désactiver les interruptions

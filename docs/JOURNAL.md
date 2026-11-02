@@ -19,6 +19,16 @@ décisions prises.
 - Décision : icônes de fenêtre en SVG — `✕`, `⤢` et `≡` absents des polices ;
   les sous-ensembles ont révélé un range Unicode trop étroit, et le reste
   était dans les sources.
+- **Icônes d'applications (barre des tâches)** : le dock étant refusé (§10.1),
+  ce sont les tâches ouvertes qui portent les icônes. `creerIconeApp(nom)`
+  dessine en SVG inline (`viewBox 0 0 12 12`, trait `1.4`, round, remplissage
+  ponctuel `currentColor`) : `terminal` (cadre + pastille) et `fichiers`
+  (dossier). Géométrie arrondie en multiples de 4 px. Géométrie documentée
+  §10.7 (décision 2026-10-31).
+- **Bug serveur de maquette résolu** : `app.js` était servi **obsolète** par le
+  cache HTTP (heuristique python `http.server`, requête sans query string).
+  Fix : `<script src="app.js?v=20261031-icones">`. Le reload seul ne suffisait
+  pas — la sous-ressource n'héritait pas la query string de la document.
 
 ---
 
@@ -381,6 +391,37 @@ décisions prises.
   `assets/fonts/jetbrainsmono-latin.woff2`,
   licences `OFL-Inter.txt`, `OFL-JetBrainsMono.txt`). Entrée de journal
   manquante notée ici plutôt que réécrite dans le passé.
+- **Indicateurs système (volume / Wi-Fi / batterie + luminosité)**, ajoutés
+  dans cette session : bouton cluster unique `#bouton-systeme` dans la barre
+  droite (§10.7), popover réglages rapides (`#popover-systeme`, 4 lignes :
+  volume+son, Wi-Fi, batterie, luminosité), voile `#voile-luminosite`
+  (aplat, opacité = 1 − luminosité/100). Alertes au `primary` seulement
+  (son coupé, Wi-Fi perdu, batterie < 20 %). État en
+  `localStorage` (`xili.etat-systeme`, clé nominale §10.7). Le bascule «
+  son » du popover porte désormais le texte `coupé` / `découpé`. Le bouton
+  barre passe à `height: var(--hit)` (32 px au lieu de
+  `calc(var(--hit) - 4px)`), sous le minimum tactile du §6.
+- **Cache navigateur** : un `reload` n'a pas toujours forcé une revalidation
+  du CSS ; la feuille servie restait l'ancienne (95 règles, sans les nouvelles
+  `.sys-icone` / `.popover-systeme`). Dev loop de la maquette : modifier,
+  sauvegarder, recharger, puis vérifier
+  `document.styleSheets[0].cssRules`.
+- **Applications secondaires du bureau** : suite aux reponses du user,
+  fenetres ouvertes pour « Ce PC ou ordinateur », « Reseau », « Corbeille » et
+  « Dossier » via le menu (actions `cepcou`, `reseauapp`, `corbeille`, `dossier`),
+  avec panneaux `.app-mock` (listes, aplats). Icones dedies (`pc`, `reseau`,
+  `corbeille`, `dossier`) dans `ICONE_PAR_TITRE`.
+- **Batterie en lecture seule** (suite à la demande) : le niveau de charge ne
+  se modifie plus — c'est une valeur **physique** du poste (comme le niveau de
+  son, qui reste un réglage simulé en maquette, mais la batterie est un fait).
+  Le popover, le slider 0–100 et la mise à jour de l'état ont été retirés ;
+  il ne reste que la lecture (`#batt-niveau`) et l'alerte `< 20 %`. Le slider
+  volume et les bascules Wi-Fi / son restent ajustables.
+- **Mosaïque désactivée → positions d'origine restaurées** : la désactivation
+  des fenêtres tuilées repart de leurs positions mémorisées (`posFlottante`,
+  capturées **avant** le placement tuilé). Cycle vérifié en navigateur :
+  flot → tuilage → désactivation → restauration au flot d'origine. (Avant ce
+  cycle, la désactivation laissait les fenêtres sur la géométrie tuilée.)
 - À faire ensuite (non journalisé, reste ouvert) : test à la main des
   gestes de glisser (le poignée et la sortie de l'arbre), capture d'écran
   des deux thèmes quand la session bureau sera visible, puis mise à jour du

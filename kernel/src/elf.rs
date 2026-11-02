@@ -99,7 +99,7 @@ unsafe fn parse_phdr(data: &[u8], off: usize) -> Option<Elf64Phdr> {
  * ------------------------------------------------------------ */
 
 pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
-        if data.len() < size_of::<Elf64Ehdr>() {
+    if data.len() < core::mem::size_of::<Elf64Ehdr>() {
         return None;
     }
 
@@ -147,12 +147,11 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
                     let page_vaddr =
                         (seg_vaddr & !0xFFF) + page_idx as u64 * PAGE_SIZE as u64;
 
-                    
                     let paddr = crate::mm::phys::alloc_page()
                         .expect("ELF: OOM") as u64;
-                    
+
                     crate::mm::paging::map_page(page_vaddr, paddr, page_flags);
-                    
+
                     let file_page_off =
                         seg_offset + page_idx * PAGE_SIZE - page_offset_in_seg;
 
@@ -160,15 +159,14 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
                         && file_page_off < seg_offset + filesz
                     {
                         let copy_end = core::cmp::min(
-                            file_page_off + 1,
+                            file_page_off + PAGE_SIZE,
                             core::cmp::min(seg_offset + filesz, data.len()),
                         );
                         let copy_size = copy_end - file_page_off;
-                                                unsafe {
-                            core::ptr::write_volatile(
-                                page_vaddr as *mut u8,
-                                *data.as_ptr().add(file_page_off),
-                            );
+                        unsafe {
+                            let src = data.as_ptr().add(file_page_off);
+                            let dst = page_vaddr as *mut u8;
+                            core::ptr::copy_nonoverlapping(src, dst, copy_size);
                         }
                     }
 
@@ -236,10 +234,6 @@ pub unsafe fn build_stack(
 
     let name_bytes = name.as_bytes();
     let name_dst = argv[0] as *mut u8;
-    crate::console::print(format_args!(
-        "STACK: argv[0]={:#x} name={:?} len={}\n",
-        argv[0], name, name_bytes.len()
-    ));
     core::ptr::copy_nonoverlapping(name_bytes.as_ptr(), name_dst, name_bytes.len());
     *name_dst.add(name_bytes.len()) = 0;
 
@@ -249,10 +243,6 @@ pub unsafe fn build_stack(
     for _i in 0..aux_idx { total_size += 16; }
 
     let stack_top = (stack_base_vaddr - total_size as u64) & !0xF;
-    crate::console::print(format_args!(
-        "STACK: base={:#x} top={:#x} argc={} envc={} aux={}\n",
-        stack_base_vaddr, stack_top, argc, envc, aux_idx
-    ));
 
     let sp = stack_top as *mut u64;
     *sp = argc as u64;

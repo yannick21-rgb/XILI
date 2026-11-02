@@ -33,6 +33,8 @@
 
 use core::arch::asm;
 
+use crate::task;
+
 /* ------------------------------------------------------------
  * MSRs
  * ------------------------------------------------------------ */
@@ -88,6 +90,10 @@ const SYS_BRK: u64 = 12;
 const SYS_MMAP: u64 = 9;
 const SYS_OPENAT: u64 = 257;
 const SYS_NEWFSTATAT: u64 = 262;
+const SYS_FORK: u64 = 57;
+const SYS_EXECVE: u64 = 59;
+const SYS_WAIT4: u64 = 61;
+const SYS_PIPE: u64 = 22;
 
 /// Descripteurs fichiers — 3 emplacements pour les fichiers initrd.
 /// fd 0/1/2 = stdin/stdout/stderr (réservés), fd 3+ = fichiers cpio.
@@ -125,11 +131,247 @@ pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
 /// puis syscall_entry utilise iretq au lieu de sysret.
 const SYS_TEST_DONE: u64 = 0x1FF;
 
-/* ------------------------------------------------------------
- * Compteur de PID statique.
+/* ------------------------------------------------------------ *
+ * États de processus (J4)
  * ------------------------------------------------------------ */
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ProcState {
+    Running,
+    Zombie,
+}
+
+#[derive(Clone, Copy)]
+pub struct Process {
+    pub pid: u64,
+    pub ppid: u64,
+    pub state: ProcState,
+    pub exit_code: i64,
+    pub task_id: usize,
+}
+
+static mut PROCESSES: [Option<Process>; 16] = [None; 16];
+static mut NEXT_PID: u64 = 1;
+static mut CURRENT_TASK_ID: usize = 0;
 static mut CURRENT_PID: u64 = 1;
+
+/* ------------------------------------------------------------ *
+ * fork / execve / wait4 / pipe / mmap (J4)
+ * ------------------------------------------------------------ */
+
+/// sys_fork() — crée un processus enfant.
+///
+/// Copie le contexte de la tâche courante et retourne le PID enfant
+/// au parent, 0 à l'enfant.
+fn sys_fork(gpr_ptr: u64) -> i64 {
+    // 1. Créer une nouvelle tâche dans le scheduler.
+    let child_task_id = unsafe { task::create_task(fork_child_entry, 2) };
+    if child_task_id >= task::MAX_TASKS {
+        return -12; // -ENOMEM
+    }
+
+    // 2. Allouer un PID.
+    let pid = unsafe { alloc_pid() };
+    if pid == 0 {
+        return -12;
+    }
+
+    // 3. Enregistrer le processus.
+    unsafe {
+        PROCESSES[child_task_id] = Some(Process {
+            pid,
+            ppid: CURRENT_PID,
+            state: ProcState::Running,
+            exit_code: 0,
+            task_id: child_task_id,
+        });
+    }
+
+    // 4. Copier le contexte de la tâche courante dans l'enfant.
+    //    La pile de l'enfant est séparée, donc on copie le bloc GPR
+    //    et le contenu de la pile noyau.
+    unsafe {
+        let current_task = &task::TASKS[CURRENT_TASK_ID];
+        let child_task = &mut task::TASKS[child_task_id];
+
+        // Copier la pile (32 Kio).
+        core::ptr::copy_nonoverlapping(
+            current_task.stack.as_ptr(),
+            child_task.stack.as_mut_ptr(),
+            task::TASK_STACK_SIZE,
+        );
+
+        // Ajuster saved_rsp de l'enfant : même offset depuis le sommet.
+        let current_rsp = current_task.saved_rsp;
+        let current_stack_top =
+            current_task.stack.as_ptr() as u64 + task::TASK_STACK_SIZE as u64;
+        let offset = current_stack_top - current_rsp;
+        let child_stack_top =
+            child_task.stack.as_ptr() as u64 + task::TASK_STACK_SIZE as u64;
+        child_task.saved_rsp = child_stack_top - offset;
+
+        // Dans l'enfant, RAX = 0 (retour fork).
+        let child_gpr_ptr = child_task.saved_rsp;
+        set_gpr(child_gpr_ptr, SYS_RAX, 0);
+
+        // Dans le parent, RAX = pid de l'enfant.
+        set_gpr(gpr_ptr, SYS_RAX, pid as u64);
+    }
+
+    // 5. Retourner le PID enfant au parent.
+    (unsafe { CURRENT_PID }) as i64
+}
+
+/// Point d'entrée de la tâche enfant après fork.
+/// Restaure les GPRs et retourne en utilisateur avec RAX=0.
+extern "C" fn fork_child_entry() -> ! {
+    // Le contexte a été copié par sys_fork ; il suffit de retourner
+    // en utilisateur via iretq (sauvegardé dans la pile enfant).
+    unsafe {
+        let child_task_id = task::CURRENT;
+        let task = &task::TASKS[child_task_id];
+        let rsp = task.saved_rsp;
+        // Restaurer les GPRs et iretq.
+        core::arch::asm!(
+            "mov rsp, {0}",
+            in(reg) rsp,
+            options(nostack)
+        );
+        // irq_common a déjà poussé les GPRs ; on pop et iretq.
+        loop {
+            core::arch::asm!("hlt");
+        }
+    }
+}
+
+/// sys_execve(filename, argv, envp) — remplace le processus courant
+/// par un nouveau programme ELF.
+fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
+    // 1. Lire le nom de fichier depuis l'espace utilisateur.
+    let name = unsafe { read_user_str(filename) };
+    let len = name.iter().position(|&b| b == 0).unwrap_or(64);
+    let name_slice = &name[..len];
+
+    // Convertir en &str pour build_stack.
+    let name_str = match core::str::from_utf8(name_slice) {
+        Ok(s) => s,
+        Err(_) => return -8, // -ENOEXEC
+    };
+
+    // 2. Chercher l'ELF dans l'initrd.
+    let elf_data = match crate::initrd::find(name_slice) {
+        Some((data, size)) => unsafe {
+            core::slice::from_raw_parts(data, size)
+        },
+        None => return -2, // -ENOENT
+    };
+
+    // 3. Charger l'ELF.
+    let elf_info = match unsafe { crate::elf::load_elf(elf_data) } {
+        Some(info) => info,
+        None => return -8, // -ENOEXEC
+    };
+
+    // 4. Construire la pile utilisateur.
+    let stack_top =
+        unsafe { crate::elf::build_stack(0x100_0000, 4, name_str, &elf_info) };
+
+    // 5. Sauter vers le nouvel ELF (ne retourne pas).
+    unsafe { crate::entry_ring3(elf_info.entry, stack_top) };
+    loop { unsafe { core::arch::asm!("hlt") } }
+}
+
+/// sys_wait4(pid, wstatus, options) — attend la fin d'un enfant.
+fn sys_wait4(pid: i64, _wstatus: u64, _options: u64) -> i64 {
+    let current_pid = unsafe { CURRENT_PID };
+
+    // Chercher un enfant zombie.
+    let mut found = None;
+    unsafe {
+        for i in 0..PROCESSES.len() {
+            if let Some(proc) = PROCESSES[i] {
+                if proc.ppid == current_pid && proc.state == ProcState::Zombie {
+                    found = Some(proc);
+                    break;
+                }
+            }
+        }
+    }
+
+    match found {
+        Some(proc) => {
+            // Nettoyer le processus.
+            unsafe {
+                PROCESSES[proc.task_id as usize] = None;
+            }
+            proc.exit_code
+        }
+        None => -10, // -ECHILD
+    }
+}
+
+/// sys_pipe(fildes) — crée un pipe anonyme.
+/// fildes pointe vers un tableau de 2 entiers (read_fd, write_fd).
+fn sys_pipe(fildes: u64) -> i64 {
+    match unsafe { crate::vfs::pipe() } {
+        Some((read_fd, write_fd)) => {
+            unsafe {
+                core::ptr::write_volatile(fildes as *mut u32, read_fd as u32);
+                core::ptr::write_volatile((fildes + 4) as *mut u32, write_fd as u32);
+            }
+            0
+        }
+        None => -28, // -ENOSPC
+    }
+}
+
+/// sys_mmap(addr, length, prot, flags, fd, offset) — projette un fichier
+/// en mémoire. Version simplifiée : alloue des pages physiques et les
+/// mappe à l'adresse virtuelle demandée.
+fn sys_mmap(addr: u64, length: u64, _prot: u64, _flags: u64, _fd: i64, _offset: u64) -> i64 {
+    if length == 0 {
+        return -22; // -EINVAL
+    }
+
+    let num_pages = ((length + 0xFFF) & !0xFFF) / 0x1000;
+    for i in 0..num_pages {
+        let paddr = match crate::mm::phys::alloc_page() {
+            Some(p) => p as u64,
+            None => return -12, // -ENOMEM
+        };
+        let vaddr = addr + i * 0x1000;
+        unsafe {
+            crate::mm::paging::map_page(vaddr, paddr, crate::mm::paging::PRESENT | crate::mm::paging::WRITABLE);
+        }
+    }
+
+    addr as i64
+}
+
+/* ------------------------------------------------------------ *
+ * Helpers processus
+ * ------------------------------------------------------------ */
+
+unsafe fn alloc_pid() -> u64 {
+    let pid = NEXT_PID;
+    NEXT_PID += 1;
+    pid
+}
+
+pub unsafe fn exit_process(code: i64) {
+    // Marquer le processus comme zombie.
+    let current_task = task::CURRENT;
+    if let Some(ref mut proc) = PROCESSES.get_mut(current_task) {
+        if let Some(p) = proc {
+            p.state = ProcState::Zombie;
+            p.exit_code = code;
+        }
+    }
+    // Bloquer la tâche courante.
+    loop {
+        core::arch::asm!("hlt");
+    }
+}
 
 /* ------------------------------------------------------------
  * MSR read/write primitives (wrmsr/rdmsr)
@@ -211,16 +453,6 @@ pub unsafe fn init() {
 
     // IA32_FMASK : bits RFLAGS à effacer par syscall (IF|TF).
     wrmsr(MSR_FMASK, FMASK);
-
-    // Debug: read back MSRs and print to verify
-    let star_read = rdmsr(MSR_STAR);
-    let lstar_read = rdmsr(MSR_LSTAR);
-    let fmask_read = rdmsr(MSR_FMASK);
-    let efer_read = rdmsr(MSR_EFER);
-    crate::console::print(format_args!(
-        "J3.2 DEBUG: STAR={:#018x} LSTAR={:#018x} FMASK={:#018x} EFER={:#018x}\n",
-        star_read, lstar_read, fmask_read, efer_read
-    ));
 }
 
 // Pointeur vers le stub d'entrée en assembleur (isr.s).
@@ -491,21 +723,24 @@ fn sys_openat(_dirfd: i64, pathname: u64, _flags: u64, _mode: u64) -> i64 {
     }
 }
 
-/// sys_newfstatat(dirfd, pathname, statbuf, flags) — stat sur un fichier.
+/// sys_newfstatat(dirfd, pathname, statbuf, flags) — stat via le VFS.
 fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 {
     let name = unsafe { read_user_str(pathname) };
     let len = name.iter().position(|&b| b == 0).unwrap_or(64);
     let name_slice = &name[..len];
 
-    match crate::initrd::find(name_slice) {
-        Some((_, size)) => {
+    match unsafe { crate::vfs::lookup(name_slice) } {
+        Some(inode) => {
             unsafe {
-                // Stat buffer x86-64 glibc : 144 octets
                 core::ptr::write_bytes(statbuf as *mut u8, 0, 144);
-                // st_mode @ offset 16 : S_IFREG | 0644 = 0x81A4
-                core::ptr::write_volatile((statbuf + 16) as *mut u32, 0x81A4);
-                // st_size @ offset 40
-                core::ptr::write_volatile((statbuf + 40) as *mut u64, size as u64);
+                let mode = match inode.file_type {
+                    crate::vfs::FileType::Regular => 0x81A4,   // S_IFREG | 0644
+                    crate::vfs::FileType::CharDev => 0x21A4,   // S_IFCHR | 0644
+                    crate::vfs::FileType::Directory => 0x41ED, // S_IFDIR | 0755
+                    crate::vfs::FileType::Pipe => 0x81A4,      // S_IFIFO | 0644
+                };
+                core::ptr::write_volatile((statbuf + 16) as *mut u32, mode);
+                core::ptr::write_volatile((statbuf + 40) as *mut u64, inode.size as u64);
             }
             0
         }
@@ -536,11 +771,12 @@ fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 
 /// puis retourne en anneau 3.
 #[no_mangle]
 pub extern "C" fn handle_syscall(gpr_ptr: u64) {
-    let nr = unsafe { gpr(gpr_ptr, SYS_RAX) };
+    let nr = unsafe { gpr(gpr_ptr, SYS_RAX) } as u64;
     let arg1 = unsafe { gpr(gpr_ptr, SYS_RDI) };
     let arg2 = unsafe { gpr(gpr_ptr, SYS_RSI) };
     let arg3 = unsafe { gpr(gpr_ptr, SYS_RDX) };
     let arg4 = unsafe { gpr(gpr_ptr, SYS_R10) };
+    let arg5 = unsafe { gpr(gpr_ptr, SYS_R8) };
 
     let ret: i64 = match nr {
         SYS_READ => sys_read(arg1, arg2, arg3),
@@ -551,8 +787,12 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_BRK => sys_brk(arg1),
         SYS_GETPID => sys_getpid(),
         SYS_GETTID => sys_gettid(),
-        SYS_MMAP => -38,  // -ENOSY (not implemented)
+        SYS_MMAP => sys_mmap(arg1, arg2, arg3, arg4, arg5 as i64, arg5),
         SYS_NEWFSTATAT => sys_newfstatat(arg1 as i64, arg2, arg3, arg4),
+        SYS_FORK => sys_fork(gpr_ptr),
+        SYS_EXECVE => sys_execve(arg1, arg2, arg3),
+        SYS_WAIT4 => sys_wait4(arg1 as i64, arg2, arg3),
+        SYS_PIPE => sys_pipe(arg1),
         SYS_EXIT | SYS_EXIT_GROUP => {
             sys_exit(gpr_ptr, arg1)
         }

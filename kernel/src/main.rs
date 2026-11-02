@@ -19,6 +19,7 @@ mod syscall;
 mod task;
 mod tss;
 mod vga;
+mod vfs;
 
 global_asm!(include_str!("boot.s"), options(att_syntax));
 global_asm!(include_str!("isr.s"), options(att_syntax));
@@ -146,6 +147,37 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     unsafe { mm::report_all(mbi) };
     // --------------------------------------------------------------------
 
+    // --- J2.4 : allocateur physique bitmap --------------------------------
+    //
+    // Le bitmap est construit à partir de la carte MBI, puis testé
+    // en boucle : 100 Mio de pages sont allouées puis libérées ; le
+    // compteur de pages libres doit revenir exactement à la valeur
+    // initiale.
+    //
+    // L'allocateur n'est pas appelé depuis les IRQ (AI-WORKFLOW §6) : il
+    // n'y a pas encore d'interruptions, et l'allocation reste
+    // sédentaire.
+    //
+    // IMPORTANT : phys::init DOIT précéder paging::build car build()
+    // alloue maintenant les PT de l'identity map en 4 Kio via alloc_page.
+    unsafe { mm::phys::init(mbi) };
+    let free0 = mm::phys::free_pages();
+    let used0 = mm::phys::used_pages();
+    console::print(format_args!(
+        "allocateur physique : bitmap (page 4 Kio, {} libres / {} totales)\n",
+        free0, mm::phys::total_pages()
+    ));
+    let phys_ok = unsafe { mm::phys::test() };
+    console::print(format_args!(
+        "J2.4: allocateur physique bitmap - {} (libre {} -> {} pages)\n",
+        if phys_ok { "OK" } else { "ECHEC" },
+        free0, mm::phys::free_pages()
+    ));
+    console::print(format_args!(
+        "  reserve : {} pages (noyau + MBI + bitmap)\n", used0
+    ));
+    // --------------------------------------------------------------------
+
     // --- J2.3 : tables de pages 4 niveaux --------------------------------
     //
     // On construit les tables en Rust et on les active. L'identity map
@@ -204,35 +236,7 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
     // ------------------------------------------------------------
 
-    // --- J2.4 : allocateur physique bitmap --------------------------------
-    //
-    // Le bitmap est construit à partir de la carte MBI, puis testé
-    // en boucle : 100 Mio de pages sont allouées puis libérées ; le
-    // compteur de pages libres doit revenir exactement à la valeur
-    // initiale.
-    //
-    // L'allocateur n'est pas appelé depuis les IRQ (AI-WORKFLOW §6) :
-    // il n'y a pas encore d'interruptions, et l'allocation reste
-    // sédentaire.
-    unsafe { mm::phys::init(mbi) };
-    let free0 = mm::phys::free_pages();
-    let used0 = mm::phys::used_pages();
-    console::print(format_args!(
-        "allocateur physique : bitmap (page 4 Kio, {} libres / {} totales)\n",
-        free0, mm::phys::total_pages()
-    ));
-    let phys_ok = unsafe { mm::phys::test() };
-    console::print(format_args!(
-        "J2.4: allocateur physique bitmap - {} (libre {} -> {} pages)\n",
-        if phys_ok { "OK" } else { "ECHEC" },
-        free0, mm::phys::free_pages()
-    ));
-    console::print(format_args!(
-        "  reserve : {} pages (noyau + MBI + bitmap)\n", used0
-    ));
-    // --------------------------------------------------------------------
 
-    // --- J2.5 : allocateur noyau kmalloc/kfree --------------------------
     //
     // Après l'allocateur physique bitmap (J2.4), on initialise le slab
     // qui fournit kmalloc/kfree. Le test alloue/libère des blocs de
@@ -353,11 +357,22 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     ));
     console::print(format_args!("  entree R3: iretq -> CS=0x2B SS=0x33\n"));
 
+    console::print(format_args!("J3.4: VFS + /dev pret\n"));
+    unsafe { crate::vfs::init() };
+    unsafe { crate::vfs::init_dev() };
+    unsafe {
+        if let Some(tty) = crate::vfs::lookup(b"tty") {
+            crate::vfs::open(tty, Some(0));
+            crate::vfs::open(tty, Some(1));
+            crate::vfs::open(tty, Some(2));
+        }
+    }
+
     // Lance busybox depuis l'initrd (J4 bootstrap).
-    run_initrd_elf("busybox")
+    run_initrd_elf("busybox", user_stack_top)
 }
 
-fn run_initrd_elf(name: &str) -> ! {
+fn run_initrd_elf(name: &str, user_stack_top: u64) -> ! {
     let name_bytes = name.as_bytes();
     let elf_data = match crate::initrd::find(name_bytes) {
         Some((data, size)) => unsafe { core::slice::from_raw_parts(data, size) },
@@ -379,7 +394,7 @@ fn run_initrd_elf(name: &str) -> ! {
         }
     };
 
-    let stack_top = unsafe { elf::build_stack(0x100_0000, 4, name, &elf_info) };
+    let stack_top = unsafe { elf::build_stack(user_stack_top, 4, name, &elf_info) };
 
     console::print(format_args!(
         "  ELF entre  = {:#018x} ({} octets)\n",

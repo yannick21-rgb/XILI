@@ -71,10 +71,10 @@ const FRAME_SIZE: usize = 5 * 8; // 40
 const TASK_FRAME_SIZE: usize = GPR_SAVE_SIZE + FRAME_SIZE; // 160
 
 /// La pile de chaque tâche : 32 Kio, alignée à 16 octets.
-const TASK_STACK_SIZE: usize = 32_384;
+pub const TASK_STACK_SIZE: usize = 32_384;
 
 /// Nombre maximum de tâches (y compris le noyau principal).
-const MAX_TASKS: usize = 8;
+pub const MAX_TASKS: usize = 8;
 
 /// Priorité du noyau principal : la plus basse.
 /// Le noyau est la tâche d'inactivité — il ne tourne que lorsqu'aucune
@@ -96,7 +96,7 @@ pub struct Task {
 }
 
 /// Tableau des tâches. L'entrée 0 est toujours le noyau principal.
-static mut TASKS: [Task; MAX_TASKS] = [
+pub static mut TASKS: [Task; MAX_TASKS] = [
     Task {
         stack: [0; TASK_STACK_SIZE],
         saved_rsp: 0,
@@ -107,7 +107,7 @@ static mut TASKS: [Task; MAX_TASKS] = [
 ];
 
 /// Indice de la tâche courante dans TASKS.
-static mut CURRENT: usize = 0;
+pub static mut CURRENT: usize = 0;
 
 /// Nombre de tâches créées (prochain ID disponible).
 static mut NUM_TASKS: usize = 1; // 0 = noyau principal

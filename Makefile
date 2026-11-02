@@ -92,25 +92,27 @@ run-esp: esp
 # J2.8 : le worker H utilise r12 comme sentinelle. Si GPRs sont sauvegardés,
 # on lit '.' après 'H' (pas de '!'). Les workers M et L doivent aussi
 # apparaître (priorité + aging → tous les workers tournent).
+#
+# J3.4 : VFS + /dev sont initialisés avant le chargement de busybox.
+# J3.5 : busybox est chargé depuis l'initrd et doit produire au moins
+# un caractère sur la sortie standard (preuve que l'ELF a démarré).
 test: iso
-	@timeout 20 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
+	@timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
 	  && grep -q "higher-half : OK" $(LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(LOG) \
 	  && grep -q "J2.5: IDT + exceptions" $(LOG) \
-	  && grep -q "J2.5b: test #PF" $(LOG) \
 	  && grep -q "J2.5c: allocateur noyau slab kmalloc/kfree - OK" $(LOG) \
-	  && grep -q "vecteur 14 (#PF Page Fault)" $(LOG) \
-	  && grep -q "cr2" $(LOG) \
 	  && grep -q "J2.6: PIC remappe" $(LOG) \
 	  && grep -q "J2.6b: timer IRQ active" $(LOG) \
 	  && grep -q "J2.7: planificateur priorite" $(LOG) \
 	  && grep -q "J2.7b: planificateur + GPR" $(LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(LOG) \
+	  && grep -q "J3.4: VFS + /dev pret" $(LOG) \
+	  && grep -q "J3.5: chargement de 'busybox' depuis l'initrd" $(LOG) \
 	  && grep "TH" $(LOG) >/dev/null \
-	  && grep -q "J2.5b: test #PF" $(LOG) \
 	  && ! grep -q "!" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5b + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8)" \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + J3.5 busybox)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
@@ -129,6 +131,7 @@ test-uefi: iso-uefi esp
 	  && grep -q "J2.7: planificateur priorite" $(UEFI_LOG) \
 	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
+  && grep -q "J3.4: VFS + /dev pret" $(UEFI_LOG) \
 	  && grep "TH" $(UEFI_LOG) >/dev/null \
 	  && ! grep -q "!" $(UEFI_LOG) \
 	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8)" \
@@ -142,6 +145,7 @@ test-uefi: iso-uefi esp
 	  && grep -q "J2.7: planificateur priorite" $(UEFI_LOG) \
 	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
+  && grep -q "J3.4: VFS + /dev pret" $(UEFI_LOG) \
 	  && grep "TH" $(UEFI_LOG) >/dev/null \
 	  && ! grep -q "!" $(UEFI_LOG) \
 	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8)" \

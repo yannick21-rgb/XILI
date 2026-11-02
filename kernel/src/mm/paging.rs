@@ -5,13 +5,19 @@
  * `boot.s` par des tables bâties en Rust, qui couvrent deux
  * espaces en même temps :
  *
- *   - l'identity map   0 .. 1 Gio
- *   - le higher-half   0xFFFFFFFF80000000 .. +1 Gio
+ *   - l'identity map   0 .. 1 Gio   (pages de 4 Kio, pas de grandes pages)
+ *   - le higher-half   0xFFFFFFFF80000000 .. +1 Gio (pages de 2 Mio)
  *
  * L'identity map est conservé volontairement : le noyau n'est pas
  * encore relié en higher-half, son code et sa pile vivent à 1 Mio.
  * Tant qu'il tourne là, il faut que 1 Mio reste accessible. On le
  * supprimera quand le noyau saura sauter en higher-half.
+ *
+ * L'identity map utilise des pages de 4 Kio (et non des grandes pages
+ * 2 Mio) pour contourner un bug TLB de QEMU TCG : le split à chaud
+ * d'une grande page en PT 4 Kio laisse parfois l'ancienne entrée
+ * TLB en place, provoquant un page fault sur les adresses ELF
+ * (ex: 0x600000).
  *
  * Une page de 4 Kio est mappée à part, dans un espace qui n'est
  * couvert par aucun grand descripteur, pour prouver que le parcours
@@ -88,7 +94,8 @@ pub const ENTRIES: usize = 512;
 /// être accessibles depuis le CPL 3. Dans un vrai noyau, seules les
 /// pages partagées avec l'utilisateur porteraient ce bit.
 pub const USER: u64 = 1 << 2;
-const KERNEL_PAGE: u64 = PRESENT | WRITABLE | GLOBAL | USER;
+const KERNEL_PAGE: u64 = PRESENT | WRITABLE | USER;
+const IDENTITY_PAGE: u64 = PRESENT | WRITABLE | USER;
 
 /// Drapeaux d'un descripteur de table (PML4E, PDPTE, PDE vers une PT).
 ///
@@ -108,7 +115,7 @@ const LINK: u64 = PRESENT | WRITABLE | USER;
 ///
 /// Le noyau ne s'exécute jamais depuis ses pages de données ; retirer
 /// le droit d'exécution y enlève un moyen d'exploitation.
-const DATA_PAGE: u64 = PRESENT | WRITABLE | GLOBAL | NOEXEC;
+const DATA_PAGE: u64 = PRESENT | WRITABLE | NOEXEC;
 
 /* ------------------------------------------------------------
  * Descripteur
@@ -223,7 +230,7 @@ impl PageTable {
 static mut PML4: PageTable = PageTable::new();
 /// PDPT de l'identity map.
 static mut PDPT_LOW: PageTable = PageTable::new();
-/// PD de l'identity map : 512 grandes pages de 2 Mio.
+/// PD de l'identity map : 512 PT de 4 Kio.
 static mut PD_LOW: PageTable = PageTable::new();
 /// PDPT du higher-half.
 static mut PDPT_HIGH: PageTable = PageTable::new();
@@ -304,7 +311,7 @@ pub struct KernelTables {
     pml4: u64,
     /// Nombre de descripteurs posés dans la PML4.
     pml4_entries: u32,
-    /// Descripteurs de l'identity map (grandes pages).
+    /// Descripteurs de l'identity map (PT de 4 Kio).
     identity_entries: u32,
     /// Descripteurs du higher-half (grandes pages).
     higher_half_entries: u32,
@@ -356,11 +363,26 @@ impl KernelTables {
     }
 }
 
+/// Résout une adresse virtuelle en adresse physique à l'aide des tables
+/// actuellement en mémoire.
+pub fn translate(vaddr: u64) -> Option<u64> {
+    let tables = KernelTables {
+        pml4: unsafe { phys(core::ptr::addr_of!(PML4)) },
+        pml4_entries: 0,
+        identity_entries: 0,
+        higher_half_entries: 0,
+        page4k_entries: 0,
+    };
+    tables.translate(vaddr)
+}
+
 /// Construit les tables du noyau.
 ///
-/// Couvre l'identity map et le higher-half en pages de 2 Mio, plus
-/// une page de 4 Kio mappée dans un espace dédié. Renvoie le résumé
-/// de ce qui a été posé.
+/// Couvre l'identity map et le higher-half, plus une page de test
+/// 4 Kio. Renvoie le résumé de ce qui a été posé.
+///
+/// L'identity map est construit en pages de 4 Kio pour éviter un bug
+/// TLB sous QEMU TCG lors du split à chaud de grandes pages 2 Mio.
 pub fn build() -> KernelTables {
     unsafe {
         let pml4 = &mut *core::ptr::addr_of_mut!(PML4);
@@ -381,13 +403,29 @@ pub fn build() -> KernelTables {
         pd_scratch.clear();
         pt_scratch.clear();
 
-        // --- identity map : 0 .. 1 Gio, pages de 2 Mio ---
-        // PD_LOW : 512 grandes pages de 2 Mio, de 0 à 1 Gio.
+        // --- identity map : 0 .. 1 Gio, pages de 4 Kio ---
+        // PD_LOW : 512 PT de 4 Kio, couvrant 0..1 Gio.
+        //
+        // On utilise des pages de 4 Kio au lieu de grandes pages 2 Mio
+        // pour éviter un bug TLB sous QEMU TCG : lors du split à chaud
+        // d'une grande page en PT 4 Kio, QEMU TCG conserve parfois
+        // l'ancienne entrée TLB, ce qui provoque un page fault sur les
+        // adresses ELF (ex: 0x600000).
         for i in 0..ENTRIES {
-            pd_low.set(
-                i,
-                Entry::new((i as u64) * PAGE_2M as u64, KERNEL_PAGE | HUGE),
-            );
+            let page = crate::mm::phys::alloc_page()
+                .expect("build: OOM PT identity") as u64;
+            core::ptr::write_bytes(page as *mut u8, 0, PAGE_SIZE);
+            let pt = &mut *(page as *mut PageTable);
+            for j in 0..ENTRIES {
+                pt.set(
+                    j,
+                    Entry::new(
+                        (i as u64) * PAGE_2M as u64 + (j as u64) * PAGE_SIZE as u64,
+                        IDENTITY_PAGE,
+                    ),
+                );
+            }
+            pd_low.set(i, Entry::new(page, LINK));
         }
 
         // PML4[0] -> PDPT_LOW -> PD_LOW.
@@ -485,7 +523,7 @@ pub fn report(tables: &KernelTables) {
         tables.pml4_entries
     ));
     console::print(format_args!(
-        "  identity 0..1 Gio  : {} grandes pages de 2 Mio\n",
+        "  identity 0..1 Gio  : {} PT de 4 Kio\n",
         tables.identity_entries
     ));
     console::print(format_args!(
@@ -648,6 +686,13 @@ pub unsafe fn map_page(vaddr: u64, paddr: u64, flags: u64) {
             ));
         }
         pd.set(pd_index(vaddr), Entry::new(page, LINK));
+        unsafe {
+            core::arch::asm!(
+                "invlpg [{vaddr}]",
+                vaddr = in(reg) vaddr,
+                options(nostack, preserves_flags)
+            );
+        }
         page as *mut PageTable
     } else {
         let page = crate::mm::phys::alloc_page()
@@ -661,10 +706,13 @@ pub unsafe fn map_page(vaddr: u64, paddr: u64, flags: u64) {
     // --- Posée de l'entrée 4 Kio finale ---
     pt.set(pt_index(vaddr), Entry::new(paddr, flags));
 
-    // Invalidation TLB ciblée : on invalide uniquement la page qu'on
-    // vient de mapper, sans toucher au reste du TLB.
+    // Flush TLB pour l'adresse exacte : le CPU peut garder une ancienne
+    // entrée globale huge-page dans le TLB.
     unsafe {
-        core::arch::asm!("mfence", options(nostack));
-        core::arch::asm!("invlpg [{}]", in(reg) vaddr, options(nostack));
+        core::arch::asm!(
+            "invlpg [{vaddr}]",
+            vaddr = in(reg) vaddr,
+            options(nostack, preserves_flags)
+        );
     }
 }

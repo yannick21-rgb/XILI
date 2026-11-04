@@ -92,7 +92,9 @@ unsafe fn parse_phdr(data: &[u8], off: usize) -> Option<Elf64Phdr> {
     if off + size_of::<Elf64Phdr>() > data.len() {
         return None;
     }
-    Some(*(data.as_ptr().add(off) as *const Elf64Phdr))
+    // Lecture via read_unaligned : le champ de header n'est pas garanti
+    // aligne (ELF n'impose que l'alignement du segment, pas des headers).
+    Some(core::ptr::read_unaligned(data.as_ptr().add(off) as *const Elf64Phdr))
 }
 
 /* ------------------------------------------------------------
@@ -100,22 +102,12 @@ unsafe fn parse_phdr(data: &[u8], off: usize) -> Option<Elf64Phdr> {
  * ------------------------------------------------------------ */
 
 pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
-    console::print(format_args!("load_elf: start data.len={}\n", data.len()));
     if data.len() < core::mem::size_of::<Elf64Ehdr>() {
-        console::print(format_args!("load_elf: FAIL header too short\n"));
         return None;
     }
 
     let ehdr = &*(data.as_ptr() as *const Elf64Ehdr);
 
-    console::print(format_args!("load_elf: BEFORE_MAGIC\n"));
-    console::print(format_args!(
-        "load_elf: magic={:02x} {:02x} {:02x} {:02x} class={} endian={} machine={} type={}\n",
-        ehdr.e_ident[0], ehdr.e_ident[1], ehdr.e_ident[2], ehdr.e_ident[3],
-        ehdr.e_ident[4], ehdr.e_ident[5], ehdr.e_machine,
-        u16::from_le_bytes([ehdr.e_ident[12], ehdr.e_ident[13]])
-    ));
-    console::print(format_args!("load_elf: AFTER_MAGIC\n"));
     if ehdr.e_ident[0..4] != ELF_MAGIC {
         console::print(format_args!("load_elf: FAIL bad magic\n"));
         return None;
@@ -133,18 +125,8 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
         return None;
     }
     if ehdr.e_phentsize as usize != size_of::<Elf64Phdr>() {
-        console::print(format_args!(
-            "load_elf: FAIL phentsize {} != sizeof(Elf64Phdr) {}\n",
-            ehdr.e_phentsize,
-            size_of::<Elf64Phdr>()
-        ));
         return None;
     }
-
-    console::print(format_args!(
-        "load_elf: ehdr ok phoff={} phnum={} phentsize={} entry={:#x}\n",
-        ehdr.e_phoff, ehdr.e_phnum, ehdr.e_phentsize, ehdr.e_entry
-    ));
 
     let phoff = ehdr.e_phoff as usize;
     let phnum = ehdr.e_phnum;
@@ -154,7 +136,12 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
     for i in 0..phnum as usize {
         let off = phoff + i * size_of::<Elf64Phdr>();
         let phdr = parse_phdr(data, off)?;
-        console::print(format_args!("ELF segment {}: type={} vaddr={:#x} offset={:#x} filesz={} memsz={}\n", i, phdr.p_type, phdr.p_vaddr, phdr.p_offset, phdr.p_filesz, phdr.p_memsz));
+
+        // W8 : congruence p_vaddr ≡ p_offset (mod page) — invariant ELF
+        // pour les segments LOAD; un desync = header corrompu.
+        if (phdr.p_vaddr as usize) % PAGE_SIZE != (phdr.p_offset as usize) % PAGE_SIZE {
+            return None;
+        }
 
         match phdr.p_type {
             PT_PHDR => {
@@ -180,7 +167,6 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
                     let page_vaddr =
                         seg_vaddr + page_idx as u64 * PAGE_SIZE as u64;
 
-                    console::print(format_args!("  map page {} -> {:#x}\n", page_idx, page_vaddr));
                     let paddr = crate::mm::phys::alloc_page()
                         .expect("ELF: OOM") as u64;
 
@@ -220,12 +206,10 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
                 }
             }
             _ => {
-                console::print(format_args!("ELF segment {}: skipped (type={})\n", i, phdr.p_type));
+                // Segment ignoré (ex : PT_NOTE en phase J3.5).
             }
         }
     }
-
-    console::print(format_args!("load_elf: done\n"));
 
     Some(ElfInfo {
         entry: ehdr.e_entry,
@@ -273,8 +257,8 @@ pub unsafe fn build_stack(
     core::ptr::copy_nonoverlapping(name_bytes.as_ptr(), name_dst, name_bytes.len());
     *name_dst.add(name_bytes.len()) = 0;
 
-    let mut total_size: usize = 8;
-    for _i in 0..argc { total_size += name.len() + 1; }
+    let mut total_size: usize = 8; // argc
+    total_size += argc.saturating_mul(8); // argv : argc pointeurs (+ NULL final)
     for _i in 0..envc { total_size += 32; }
     for _i in 0..aux_idx { total_size += 16; }
 

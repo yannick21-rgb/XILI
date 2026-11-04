@@ -4,3 +4,7 @@
 *.iso
 *.img
 /ovmf-vars.fd
+hello.txt
+assets/*.elf
+tools/*.elf
+tools/*.o

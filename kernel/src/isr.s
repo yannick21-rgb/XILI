@@ -274,6 +274,10 @@ syscall_entry:
     # Fall-through : SYSCALL_TEST_DONE = 0 mais EXIT_REQUESTED != 0.
     # (J3.3 — sys_exit a été appelé par le binaire ELF.)
 ring0_return:
+    # Consommer les drapeaux de sortie (J3.2 / J3.3) avant de sauter :
+    # sans reset, le prochain syscall serait re-intercepte en R0.
+    movb $0, SYSCALL_TEST_DONE(%rip)
+    movb $0, EXIT_REQUESTED(%rip)
     # Retour en anneau 0 — jmp direct vers la fonction ring-0.
     # iretq non utilisable : QEMU TCG 8.2 helper_syscall charge CS depuis
     # STAR[47:32] (KERNEL_DS=0x10) au lieu de STAR[63:48] (KERNEL_CS=0x38),

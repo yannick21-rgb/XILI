@@ -38,7 +38,7 @@ def encode_entry(name: str, data: bytes, mode: int = 0o644) -> bytes:
         f"{0:08x}"
         f"{0:08x}"
         f"{namesize:08x}"
-        f"{_crc32(b'070701' + b'\x00' * (8 * 11) + name_bytes + data):08x}"
+        f"{_crc32(b'070701' + b'\x00' * (8 * 13) + name_bytes + data):08x}"
     ).encode("ascii")
     return _pad(header + name_bytes) + _pad(data)
 

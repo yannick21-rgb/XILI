@@ -19,6 +19,30 @@ décisions prises.
 
 ---
 
+## 2026-11-04 — Backlog Warnings (W1-W12) — corrections
+
+- W1 : prints debug loader (`load_elf: start/BEFORE_MAGIC/AFTER_MAGIC`,
+  `ELF segment`, `map page`, `load_elf: done`) retirés de `elf.rs`.
+- W2 : drapeaux `SYSCALL_TEST_DONE`/`EXIT_REQUESTED` consommés dans
+  `ring0_return` (isr.s) avant `jmp *%rcx`.
+- W3 : RFLAGS ring0-retour remis à 0 (`set_gpr R11, 0x0`) partout
+  (sys_exit, SYS_TEST_DONE) — plus de TF.
+- W4 : validation user-buf (`user_buf_ok`, -EFAULT) dans `sys_getcwd` /
+  `sys_chdir` / `read_user_str`.
+- W5 : `sys_read` propage le errno (`Err(e) => e`) au lieu de `-9`.
+- W6 : `sys_mmap` utilise le bon offset (arg6 = R9 desappel).
+- W7 : `build_stack` : `total_size` calcule les slots argv (argc*8) +
+  NULLs, plus auxv — plus d'offset erroné.
+- W8 : loader ELF : `read_unaligned` pour Phdr + congruence
+  `p_vaddr ≡ p_offset (mod page)`.
+- W9 : `tools/mk-initrd.py` : CRC newc zeroed-field count `8*11` → `8*13`.
+- W10/W11 : print par syscall retiré (`handle_syscall`); dead code VFS
+  résiduel nettoyé par la unification CR-1.
+- W12 : `.gitignore` : artefacts `hello.txt`, `assets/*.elf`, `tools/*.elf`,
+  `tools/*.o`.
+
+---
+
 ## 2026-11-04 — Revue + correctifs points critiques (CR-1..CR-4)
 
 - Revue complète du diff J3.5 (agents code-reviewer / performance-profiler).

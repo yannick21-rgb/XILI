@@ -581,7 +581,11 @@ fn sys_read(fd: u64, buf: u64, count: u64) -> i64 {
     }
     unsafe {
         let n = crate::vfs::read(idx, buf as *mut u8, count as usize);
-        n.map(|v| v as i64).unwrap_or(-9)
+        // W5 : propager le errno plutot que de tout replier en -EBADF.
+        match n {
+            Ok(v) => v as i64,
+            Err(e) => e,
+        }
     }
 }
 
@@ -626,7 +630,9 @@ fn sys_exit(gpr_ptr: u64, code: u64) -> i64 {
     unsafe {
         core::ptr::write_volatile(core::ptr::addr_of_mut!(EXIT_REQUESTED), 1u8);
         set_gpr(gpr_ptr, SYS_RCX, pf_test as *const () as u64);
-        set_gpr(gpr_ptr, SYS_R11, 0x2);
+        // W3 : RFLAGS utilisateur = 0 (IF=0) — le bit 1 (TF) n'est pas un
+        // masque d'interruption.
+        set_gpr(gpr_ptr, SYS_R11, 0x0);
     }
     0
 }
@@ -638,6 +644,9 @@ fn sys_getpid() -> i64 {
 
 /// sys_getcwd() — retourne le répertoire courant.
 pub fn sys_getcwd(buf: u64, size: u64) -> i64 {
+    if !user_buf_ok(buf, size) {
+        return -14; // -EFAULT : buffer user invalide
+    }
     unsafe {
         let cwd = core::ptr::addr_of!(CURRENT_CWD) as *const u8;
         let len = core::ptr::read_volatile(core::ptr::addr_of!(CURRENT_CWD))
@@ -656,6 +665,9 @@ pub fn sys_getcwd(buf: u64, size: u64) -> i64 {
 
 /// sys_chdir() — change le répertoire courant.
 pub fn sys_chdir(path: u64) -> i64 {
+    if !user_buf_ok(path, 64) {
+        return -14; // -EFAULT : chemin user invalide
+    }
     unsafe {
         let mut buf = [0u8; 64];
         for i in 0..63 {
@@ -695,6 +707,7 @@ fn sys_gettid() -> i64 {
 }
 
 /// Lit une chaîne NUL-terminée depuis l'espace utilisateur.
+/// `ptr` doit être validé (user_buf_ok) avant l'appel — CR-3/W4.
 unsafe fn read_user_str(ptr: u64) -> [u8; 64] {
     let mut buf = [0u8; 64];
     for i in 0..63 {
@@ -794,12 +807,11 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
     let arg1 = unsafe { gpr(gpr_ptr, SYS_RDI) } as u64;
     let arg2 = unsafe { gpr(gpr_ptr, SYS_RSI) } as u64;
     let arg3 = unsafe { gpr(gpr_ptr, SYS_RDX) } as u64;
-    crate::console::print(format_args!(
-        "SYSCALL nr={} args={:#x} {:#x} {:#x}\n",
-        nr, arg1, arg2, arg3
-    ));
     let arg4 = unsafe { gpr(gpr_ptr, SYS_R10) };
     let arg5 = unsafe { gpr(gpr_ptr, SYS_R8) };
+    // W6 : l'offset de mmap est le 6e argument (registre R9 pour la
+    // convention syscall), pas le 5e (R8).
+    let arg6 = unsafe { gpr(gpr_ptr, SYS_R9) };
 
     let ret: i64 = match nr {
         SYS_READ => sys_read(arg1, arg2, arg3),
@@ -810,7 +822,7 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_BRK => sys_brk(arg1),
         SYS_GETPID => sys_getpid(),
         SYS_GETTID => sys_gettid(),
-        SYS_MMAP => sys_mmap(arg1, arg2, arg3, arg4, arg5 as i64, arg5),
+        SYS_MMAP => sys_mmap(arg1, arg2, arg3, arg4, arg5 as i64, arg6),
         SYS_NEWFSTATAT => sys_newfstatat(arg1 as i64, arg2, arg3, arg4),
         SYS_FORK => sys_fork(gpr_ptr),
         SYS_EXECVE => sys_execve(arg1, arg2, arg3),
@@ -833,7 +845,8 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
             unsafe {
                 core::ptr::write_volatile(core::ptr::addr_of_mut!(SYSCALL_TEST_DONE), 1u8);
                 set_gpr(gpr_ptr, SYS_RCX, ring0_after_test as *const () as u64);
-                set_gpr(gpr_ptr, SYS_R11, 0x2);
+                // W3 : RFLAGS utilisateur = 0 (IF=0).
+                set_gpr(gpr_ptr, SYS_R11, 0x0);
             }
             0
         }

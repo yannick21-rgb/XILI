@@ -394,8 +394,8 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         console::print(format_args!("J5.1: virtio-net absent (QEMU sans -net ?)\n"));
     }
 
-    // Lance test_j4.elf depuis l'initrd (J4 validation).
-    run_initrd_elf("test_j4.elf", user_stack_top)
+    // Lance shell.elf depuis l'initrd (J3 final : premier shell utilisateur).
+    run_initrd_elf("shell.elf", user_stack_top)
 }
 
 fn run_initrd_elf(name: &str, user_stack_top: u64) -> ! {

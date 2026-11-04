@@ -87,7 +87,6 @@ const KEYBOARD_BUFFER_SIZE: usize = 64;
 
 /// Buffer circulaire de scancodes clavier.
 static mut KEYBOARD_BUFFER: [u8; KEYBOARD_BUFFER_SIZE] = [0; KEYBOARD_BUFFER_SIZE];
-static mut KEYBOARD_BUFFER_START: usize = 0;
 static mut KEYBOARD_BUFFER_END: usize = 0;
 static mut KEYBOARD_BUFFER_COUNT: usize = 0;
 
@@ -100,24 +99,6 @@ fn keyboard_buffer_push(sc: u8) {
             KEYBOARD_BUFFER_COUNT += 1;
         }
     }
-}
-
-/// Lit un scancode du buffer circulaire, ou None si vide.
-pub fn keyboard_buffer_pop() -> Option<u8> {
-    unsafe {
-        if KEYBOARD_BUFFER_COUNT == 0 {
-            return None;
-        }
-        let sc = KEYBOARD_BUFFER[KEYBOARD_BUFFER_START];
-        KEYBOARD_BUFFER_START = (KEYBOARD_BUFFER_START + 1) % KEYBOARD_BUFFER_SIZE;
-        KEYBOARD_BUFFER_COUNT -= 1;
-        Some(sc)
-    }
-}
-
-/// Nombre de scancodes disponibles dans le buffer.
-pub fn keyboard_buffer_available() -> usize {
-    unsafe { KEYBOARD_BUFFER_COUNT }
 }
 
 /// Handler clavier (IRQ 1, vecteur 33).

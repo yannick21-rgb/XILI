@@ -5,6 +5,27 @@ décisions prises.
 
 ---
 
+## 2026-11-04 — Dead code résiduel — dernier lot (W10 final)
+
+- Suppression des fonds morts identifiés en revue : imports/variables
+  inutilisés (`net/virtio_net.rs` : `outb`, `irq` ; `vfs.rs` : `PAGE_SIZE`),
+  constantes/structs/fns jamais référencés (`elf.rs` : `PF_W`/`PF_R` ;
+  `paging.rs` : `GLOBAL`, `translate` ; `tss.rs` : `KERNEL_CS` ; `vfs.rs` :
+  champs `Inode::major`/`Inode::pipe`, `Pipe::empty`).
+- Handlers clavier : accessors `keyboard_buffer_pop`/`available` et buffer
+  start-démarreur retirés (`irq.rs`) — seul le path push (IRQ → compteur
+  clavier) reste vivant pour l'instant (J4).
+- Processus : champ `pid` redondant (`Process::pid` jamais lu, seul
+  `task_id`/`ppid` servent) retiré ; `sys_wait4` param `_pid` ; `exit_process`
+  mort supprimé.
+- Boucles mortes après `entry_ring3` (qui retourne `!`) retirées
+  (`syscall.rs::sys_execve`, `main.rs::run_initrd_elf`).
+- Validation : `cargo check` → OK, **plus aucun warning dead-code**
+  (31 → 12 ; il reste des lints `unsafe`/statics, hors lot).
+- Validation : `make test` → **TEST OK**.
+
+---
+
 ## 2026-11-04 — J3.5 : `make test` passe (test_j4 OK)
 
 - **Diagnostic** : silence après `execution en R3 via iretq...`. Marqueurs ASM

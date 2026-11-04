@@ -135,7 +135,6 @@ pub enum ProcState {
 
 #[derive(Clone, Copy)]
 pub struct Process {
-    pub pid: u64,
     pub ppid: u64,
     pub state: ProcState,
     pub exit_code: i64,
@@ -174,7 +173,6 @@ fn sys_fork(gpr_ptr: u64) -> i64 {
     // 3. Enregistrer le processus.
     unsafe {
         PROCESSES[child_task_id] = Some(Process {
-            pid,
             ppid: CURRENT_PID,
             state: ProcState::Running,
             exit_code: 0,
@@ -278,11 +276,10 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
 
     // 5. Sauter vers le nouvel ELF (ne retourne pas).
     unsafe { crate::entry_ring3(elf_info.entry, stack_top) };
-    loop { unsafe { core::arch::asm!("hlt") } }
 }
 
 /// sys_wait4(pid, wstatus, options) — attend la fin d'un enfant.
-fn sys_wait4(pid: i64, _wstatus: u64, _options: u64) -> i64 {
+fn sys_wait4(_pid: i64, _wstatus: u64, _options: u64) -> i64 {
     let current_pid = unsafe { CURRENT_PID };
 
     // Chercher un enfant zombie.
@@ -356,21 +353,6 @@ unsafe fn alloc_pid() -> u64 {
     let pid = NEXT_PID;
     NEXT_PID += 1;
     pid
-}
-
-pub unsafe fn exit_process(code: i64) {
-    // Marquer le processus comme zombie.
-    let current_task = task::CURRENT;
-    if let Some(ref mut proc) = PROCESSES.get_mut(current_task) {
-        if let Some(p) = proc {
-            p.state = ProcState::Zombie;
-            p.exit_code = code;
-        }
-    }
-    // Bloquer la tâche courante.
-    loop {
-        core::arch::asm!("hlt");
-    }
 }
 
 /* ------------------------------------------------------------
@@ -732,11 +714,9 @@ fn sys_openat(_dirfd: i64, pathname: u64, _flags: u64, _mode: u64) -> i64 {
             // est celle du VFS (source de vérité — CR-1).
             let inode = crate::vfs::Inode {
                 file_type: crate::vfs::FileType::Regular,
-                major: 0,
                 minor: 0,
                 data: data as *const u8,
                 size,
-                pipe: None,
             };
             unsafe {
                 if let Some(fd) = crate::vfs::open(inode, None) {

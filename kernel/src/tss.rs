@@ -109,7 +109,6 @@ static mut IST1_STACK: IstStack = IstStack { bytes: [0; 8192] };
 ///   [5] code R3   0x28  0x00BF_FA00_0000_FFFF (DPL=3, L=1, G=1)
 ///   [6] données R3 0x30  0x00AF_F200_0000_FFFF (DPL=3)
 ///   [7] code R0 64 0x38  0x00BF_9A00_0000_FFFF (DPL=0, L=1, G=1)
-pub const KERNEL_CS: u16 = 0x08;
 pub const KERNEL_DS: u16 = 0x10;
 /// Code segment 64-bit (L=1) pour syscall/iretq — sélecteur 0x38.
 /// Distinct de KERNEL_CS (0x08, L=0) : le noyau ne peut pas faire de

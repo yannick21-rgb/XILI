@@ -73,8 +73,6 @@ pub const PRESENT: u64 = 1 << 0;
 pub const WRITABLE: u64 = 1 << 1;
 /// Grande page : le descripteur PD pointe directement la page.
 pub const HUGE: u64 = 1 << 7;
-/// Page globale, non invalidée par un changement de CR3.
-pub const GLOBAL: u64 = 1 << 8;
 /// Exécution interdite.
 pub const NOEXEC: u64 = 1 << 63;
 
@@ -361,19 +359,6 @@ impl KernelTables {
         }
         Some(e.addr() + (vaddr & 0xFFF))
     }
-}
-
-/// Résout une adresse virtuelle en adresse physique à l'aide des tables
-/// actuellement en mémoire.
-pub fn translate(vaddr: u64) -> Option<u64> {
-    let tables = KernelTables {
-        pml4: unsafe { phys(core::ptr::addr_of!(PML4)) },
-        pml4_entries: 0,
-        identity_entries: 0,
-        higher_half_entries: 0,
-        page4k_entries: 0,
-    };
-    tables.translate(vaddr)
 }
 
 /// Construit les tables du noyau.

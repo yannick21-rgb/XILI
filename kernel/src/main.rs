@@ -429,7 +429,6 @@ fn run_initrd_elf(name: &str, user_stack_top: u64) -> ! {
     console::print(format_args!("  execution en R3 via iretq...\n"));
 
     unsafe { entry_ring3(elf_info.entry, stack_top) };
-    loop { unsafe { asm!("hlt") } }
 }
 
 #[panic_handler]

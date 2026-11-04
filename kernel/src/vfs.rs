@@ -10,7 +10,6 @@
  * ============================================================ */
 
 use crate::initrd;
-use crate::mm::paging::PAGE_SIZE;
 use core::cmp::min;
 
 /* ------------------------------------------------------------ *
@@ -29,22 +28,18 @@ pub enum FileType {
 #[derive(Clone, Copy)]
 pub struct Inode {
     pub file_type: FileType,
-    pub major: u32,
     pub minor: u32,
     pub data: *const u8,
     pub size: usize,
-    pub pipe: Option<Pipe>,
 }
 
 impl Inode {
     pub const fn empty() -> Self {
         Inode {
             file_type: FileType::Regular,
-            major: 0,
             minor: 0,
             data: core::ptr::null(),
             size: 0,
-            pipe: None,
         }
     }
 }
@@ -103,11 +98,9 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
     if path.is_empty() {
         return Some(Inode {
             file_type: FileType::Directory,
-            major: 0,
             minor: 0,
             data: core::ptr::null(),
             size: 0,
-            pipe: None,
         });
     }
 
@@ -115,11 +108,9 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
     if let Some((data, size)) = initrd::find(path) {
         return Some(Inode {
             file_type: FileType::Regular,
-            major: 0,
             minor: 0,
             data,
             size,
-            pipe: None,
         });
     }
 
@@ -128,41 +119,33 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
         b"null" => {
             return Some(Inode {
                 file_type: FileType::CharDev,
-                major: 1,
                 minor: 3,
                 data: core::ptr::null(),
                 size: 0,
-                pipe: None,
             });
         }
         b"zero" => {
             return Some(Inode {
                 file_type: FileType::CharDev,
-                major: 1,
                 minor: 5,
                 data: core::ptr::null(),
                 size: 0,
-                pipe: None,
             });
         }
         b"random" => {
             return Some(Inode {
                 file_type: FileType::CharDev,
-                major: 1,
                 minor: 8,
                 data: core::ptr::null(),
                 size: 0,
-                pipe: None,
             });
         }
         b"tty" => {
             return Some(Inode {
                 file_type: FileType::CharDev,
-                major: 1,
                 minor: 4,
                 data: core::ptr::null(),
                 size: 0,
-                pipe: None,
             });
         }
         _ => {}
@@ -216,11 +199,9 @@ unsafe fn new_proc_file(
     PROC_OPS[idx] = Some(read);
     Inode {
         file_type: FileType::ProcFile,
-        major: 0,
         minor: idx as u32,
         data: core::ptr::null(),
         size: 0,
-        pipe: None,
     }
 }
 
@@ -288,20 +269,6 @@ pub struct Pipe {
     pub writers: usize,
 }
 
-impl Pipe {
-    pub const fn empty() -> Self {
-        Pipe {
-            buf: core::ptr::null_mut(),
-            len: 0,
-            cap: 0,
-            rpos: 0,
-            wpos: 0,
-            readers: 0,
-            writers: 0,
-        }
-    }
-}
-
 static mut PIPES: [Option<Pipe>; 32] = [None; 32];
 static mut PIPE_COUNT: usize = 0;
 
@@ -349,11 +316,9 @@ pub unsafe fn pipe() -> Option<(usize, usize)> {
 
     let inode = Inode {
         file_type: FileType::Pipe,
-        major: 0,
         minor: pipe_idx as u32,
         data: core::ptr::null(),
         size: 0,
-        pipe: PIPES[pipe_idx],
     };
 
     OPEN_FILES[read_fd] = Some(FileDesc { inode, pos: 0 });

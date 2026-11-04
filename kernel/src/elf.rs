@@ -54,8 +54,6 @@ const PT_LOAD: u32 = 1;
 const PT_PHDR: u32 = 6;
 
 const PF_X: u32 = 1;
-const PF_W: u32 = 2;
-const PF_R: u32 = 4;
 
 const PAGE_SIZE: usize = 0x1000;
 

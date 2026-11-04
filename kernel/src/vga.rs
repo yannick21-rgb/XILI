@@ -1,3 +1,20 @@
+/* ============================================================
+ * vga.rs — console texte interne + framebuffer VGA 80×25
+ *
+ * Deux consoles coexistent dans le noyau :
+ *   - UART 16550 (COM1) : canal principal du noyau, c'est lui qui
+ *     alimente le journal série (`make test`, `-serial stdio`).
+ *   - VGA texte 80×25 : framebuffer texte en mémoire (0xb8000), utilisé
+ *     par la console double du bureau (terminal + visualiseur fichiers).
+ *
+ * Le curseur est un `AtomicUsize` : position en octets de caractère
+ * (colonne * 2 + ligne * WIDTH * 2 dans le framebuffer).
+ *
+ * Polices : pas de rasterisation ici — la console émet du texte brut et
+ * le rendu typographique (Inter / JetBrains Mono) est fait côté prototype
+ * ou côté composant de bureau. Le kernel ne fait que du texte.
+ * ============================================================ */
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 const VGA_BUFFER: *mut u8 = 0xb8000 as *mut u8;

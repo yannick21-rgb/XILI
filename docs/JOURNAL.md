@@ -5,6 +5,52 @@ décisions prises.
 
 ---
 
+## 2026-11-04 — J3.5 : `make test` passe (test_j4 OK)
+
+- **Diagnostic** : silence après `execution en R3 via iretq...`. Marqueurs ASM
+  (`entry_ring3` : A/E/R via wrapper série) → zéros écrits → argument `u8` de
+  l'ABI C non fiable en `al` → wrapper passé en `u64` (via `rdi`).
+- **Fix** : RFLAGS de l'entry ring-3 corrigé (`push $0x2` → `push $0x0`, le bit 2
+  étant le trap flag TF, pas l'IF).
+- **Résultat** : `SYSCALL nr=1 args=...` → `test_j4: OK` → `SYSCALL nr=60`
+  (exit) → `J3.3: processus ELF termine` → `J3.2: page-fault volontaire - OK`.
+- **Nettoyage** : marqueurs debug, `MARK`, wrapper `debug_putc` retirés.
+- **Validation** : `make test` → **TEST OK** (BIOS, tous jalons J1…J3.5).
+
+---
+
+## 2026-11-04 — Revue + correctifs points critiques (CR-1..CR-4)
+
+- Revue complète du diff J3.5 (agents code-reviewer / performance-profiler).
+- **CR-1** : tables de FDs dupliquées (`syscall::FD_TABLE` vs `vfs::OPEN_FILES`) → source de vérité unique via le VFS (`vfs::write/read/close/dup/dup2/open`).
+- **CR-2** : `dev_tty_read` bloquait sur `hlt` en contexte syscall → rendu non-bloquant.
+- **CR-3** : validation des buffers user (`USER_BUF_LIMIT` + `user_buf_ok`, -EFAULT) dans `sys_write/read/sys_newfstatat`.
+- **CR-4** : `sys_dup` dupliquait en fd 0 → via `vfs::dup` (1re fd libre ≥ 3).
+- Vérifié : `make test` → **TEST OK** après correctifs.
+
+---
+
+## 2026-11-03 — Freeze design (§6 géométrie, §7 mouvement)
+
+- Étape 3 du design : freeze des jetons terminée.
+- §6 Géométrie : rayons ouverts le 2026-10-29 (12 / 20), multiples de 4 — gel.
+- §7 Mouvement : tokens (120 / 200 / 320 ms, easing) — gel.
+- Décision associée : gel des jetons §4→§7 (DESIGN §9, décision 10).
+- Reste à valider côté contenu/UX : voix (§8) et ergonomie des écrans (§10).
+
+---
+
+## 2026-11-03 — Glisser réel validé ; applications de bureau ajoutées
+
+- **Glisser réel validé** : `browser.drag` (events pointer trusted) sur l'épingle
+  → déplacement détecté (24,24 -> 410,6 px). Pipeline pointermove/pointerup +
+  `setPointerCapture` OK ; la poignée et le titre passent par le meme pattern.
+- **Applications secondaires** : « Ce PC ou ordinateur », « Reseau », « Corbeille »,
+  « Dossier » ajoutées (menu `cepcou`/`reseauapp`/`corbeille`/`dossier`, icônes
+  `pc`/`reseau`/`corbeille`/`dossier`, panneaux `.app-mock`). DESIGN §10.8, JOURNAL.
+
+---
+
 ## 2026-10-30 — Typo : binôme Inter + JetBrains Mono validé
 
 - Maquette comparatifs (`xili-design/specimen-typo.html`) : 4 binômes, contenus

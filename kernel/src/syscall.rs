@@ -94,24 +94,16 @@ const SYS_FORK: u64 = 57;
 const SYS_EXECVE: u64 = 59;
 const SYS_WAIT4: u64 = 61;
 const SYS_PIPE: u64 = 22;
+const SYS_GETCWD: u64 = 79;
+const SYS_CHDIR: u64 = 80;
+const SYS_DUP: u64 = 32;
+const SYS_DUP2: u64 = 33;
 
-/// Descripteurs fichiers — 3 emplacements pour les fichiers initrd.
-/// fd 0/1/2 = stdin/stdout/stderr (réservés), fd 3+ = fichiers cpio.
+/// Descripteurs fichiers — 3 emplacements réservés (stdin/stdout/stderr),
+/// fd 3+ réservés aux fichiers du VFS. La table vive est celle du VFS
+/// (`crate::vfs::OPEN_FILES`) : les syscalls l'utilisent en source de
+/// vérité (CR-1).
 const MAX_FD: usize = 8;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct FileDesc {
-    data: *const u8,
-    size: usize,
-    pos: usize,
-}
-
-static mut FD_TABLE: [FileDesc; MAX_FD] = [FileDesc {
-    data: core::ptr::null(),
-    size: 0,
-    pos: 0,
-}; MAX_FD];
 
 /// Fournit `bcmp` pour le linker. LLVM génère des appels à `bcmp` pour
 /// comparer des tranches `[u8]` ; dans un kernel no_std, l'implémentation
@@ -151,9 +143,12 @@ pub struct Process {
 }
 
 static mut PROCESSES: [Option<Process>; 16] = [None; 16];
+#[link_section = ".data"]
 static mut NEXT_PID: u64 = 1;
 static mut CURRENT_TASK_ID: usize = 0;
+#[link_section = ".data"]
 static mut CURRENT_PID: u64 = 1;
+static mut CURRENT_CWD: [u8; 64] = [0; 64];
 
 /* ------------------------------------------------------------ *
  * fork / execve / wait4 / pipe / mmap (J4)
@@ -251,6 +246,11 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
     let name = unsafe { read_user_str(filename) };
     let len = name.iter().position(|&b| b == 0).unwrap_or(64);
     let name_slice = &name[..len];
+    crate::console::print(format_args!(
+        "sys_execve: name={:?} len={}\n",
+        core::str::from_utf8(name_slice).unwrap_or("<inv>"),
+        len
+    ));
 
     // Convertir en &str pour build_stack.
     let name_str = match core::str::from_utf8(name_slice) {
@@ -439,10 +439,10 @@ pub unsafe fn init() {
     // IA32_EFER : activer SCE (bit 0) — BEFORE les autres MSRs.
     wrmsr(MSR_EFER, efer | EFR_SCE);
 
-    // IA32_STAR : [63:48]=kernel CS, [47:32]=kernel SS,
-    //             [31:16]=user CS,  [15:0]=user SS
-    let star: u64 = (STAR_KERNEL_CS << 48)
-        | (STAR_KERNEL_SS << 32)
+    // IA32_STAR : [63:48]=kernel SS, [47:32]=kernel CS,
+    //             [31:16]=user CS (SYSRET +2), [15:0]=user SS
+    let star: u64 = (STAR_KERNEL_SS << 48)
+        | (STAR_KERNEL_CS << 32)
         | (STAR_USER_CS << 16)
         | (STAR_USER_SS);
     wrmsr(MSR_STAR, star);
@@ -528,110 +528,73 @@ const SYS_R11: usize = 80;  // user RFLAGS (saved by syscall)
  * Syscalls
  * ------------------------------------------------------------ */
 
+/* ------------------------------------------------------------
+ * Helpers user <-> kernel
+ * ------------------------------------------------------------ */
+
+/// Limite supérieure des buffers utilisateurs acceptés par les
+/// syscalls (espace utilisateur "utilisé" du noyau : programmes ring3
+/// en dessous de 4 GiB). Tout buffer dépassant cette frontière est
+/// considéré comme invalide (-EFAULT) — CR-3.
+const USER_BUF_LIMIT: u64 = 0x1_0000_0000;
+
+/// Vérifie qu'un buffer `[addr, addr + len)` est entièrement dans
+/// l'espace utilisateur. Renvoie false si le pointeur est invalide ou
+/// si l'addition overflow (checked_add).
+fn user_buf_ok(addr: u64, len: u64) -> bool {
+    addr.checked_add(len).map_or(false, |end| end <= USER_BUF_LIMIT)
+}
+
 /// sys_write(fd, buf, count) — écrit sur le port série pour fd=1.
 ///
 /// # Sécurité
 ///
-/// `buf` provient de l'anneau 3. Ici, le noyau et l'utilisateur partagent
-/// la même identity map (0..1 Gio), donc l'accès est sûr tant que
-/// l'adresse est dans la RAM disponible.
+/// `buf` provient de l'anneau 3 : on vérifie qu'il est dans l'espace
+/// utilisateur avant toute lecture noyau. Le descripteur est résolu via
+/// le VFS (source de vérité des fds — CR-1) : fd=1 pointe sur /dev/tty,
+/// qui écrit sur le port série.
 fn sys_write(fd: u64, buf: u64, count: u64) -> i64 {
-    match fd {
-        1 => {
-            for i in 0..count {
-                let byte =
-                    unsafe { core::ptr::read_volatile((buf + i) as *const u8) };
-                crate::serial::write_byte(byte);
-            }
-            count as i64
-        }
-        _ => -9, // -EBADF
+    if fd as usize >= MAX_FD {
+        return -9; // -EBADF
+    }
+    if !user_buf_ok(buf, count) {
+        return -14; // -EFAULT : buffer hors de l'espace utilisateur
+    }
+    unsafe {
+        let n = crate::vfs::write(fd as usize, buf as *const u8, count as usize);
+        n.map(|v| v as i64).unwrap_or(-9)
     }
 }
 
-/// sys_read(fd, buf, count) — lit depuis l'entrée standard (fd=0) ou
-/// depuis un fichier initrd (fd 3+).
+/// sys_read(fd, buf, count) — lit depuis un descripteur ouvert.
 ///
-/// Pour fd=0, tente de lire depuis le port série (COM1) de façon
-/// non bloquante. Si aucune données disponible, renvoie 0 (EOF).
-/// Pour fd >= 3, lit depuis le fichier identifié dans FD_TABLE.
-/// Pour fd < 3 (autre que stdin), renvoie -EBADF.
+/// Délègue à `vfs::read`, qui appelle le pilote approprié selon le
+/// descripteur. Pour fd=0 (TTY), `dev_tty_read` lit sur le port série
+/// et bloque tant qu'aucun octet n'est disponible.
 fn sys_read(fd: u64, buf: u64, count: u64) -> i64 {
-    match fd {
-        0 => {
-            let mut bytes: u64 = 0;
-            for i in 0..count {
-                let status = crate::io::inb(crate::serial::COM1 + 5);
-                if status & 0x01 == 0 {
-                    break;  // pas de données disponibles
-                }
-                let byte = crate::io::inb(crate::serial::COM1);
-                unsafe {
-                    core::ptr::write_volatile((buf + i) as *mut u8, byte);
-                }
-                bytes += 1;
-            }
-            bytes as i64
-        }
-        fd => {
-            // fd >= 3 : lecture depuis un fichier initrd (J3.5)
-            let idx = fd as usize;
-            if idx >= MAX_FD {
-                -9 // -EBADF
-            } else {
-                unsafe {
-                    if FD_TABLE[idx].data.is_null() {
-                        -9 // -EBADF — fd non ouvert
-                    } else {
-                        let data = FD_TABLE[idx].data;
-                        let size = FD_TABLE[idx].size;
-                        let pos = FD_TABLE[idx].pos;
-                        if pos >= size {
-                            0 // EOF
-                        } else {
-                            let n = core::cmp::min(
-                                count as usize,
-                                size - pos,
-                            );
-                            if n == 0 {
-                                0
-                            } else {
-                                for i in 0..n {
-                                    let byte = core::ptr::read_volatile(
-                                        data.wrapping_add(pos + i),
-                                    );
-                                    core::ptr::write_volatile(
-                                        (buf + i as u64) as *mut u8,
-                                        byte,
-                                    );
-                                }
-                                FD_TABLE[idx].pos = pos + n;
-                                n as i64
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    let idx = fd as usize;
+    if idx >= MAX_FD {
+        return -9; // -EBADF
+    }
+    if !user_buf_ok(buf, count) {
+        return -14; // -EFAULT : buffer hors de l'espace utilisateur
+    }
+    unsafe {
+        let n = crate::vfs::read(idx, buf as *mut u8, count as usize);
+        n.map(|v| v as i64).unwrap_or(-9)
     }
 }
 
 /// sys_close(fd) — ferme un descripteur fichier.
 /// Pour fd < 3 (stdin/stdout/stderr), renvoie -EBADF.
-/// Sinon renvoie 0 (aucun descripteur réel à fermer).
+/// Sinon ferme via le VFS (source de vérité des fds — CR-1).
 fn sys_close(fd: u64) -> i64 {
     if fd < 3 {
         -9 // -EBADF
     } else if fd as usize >= MAX_FD {
         -9 // -EBADF
     } else {
-        unsafe {
-            FD_TABLE[fd as usize] = FileDesc {
-                data: core::ptr::null(),
-                size: 0,
-                pos: 0,
-            };
-        }
+        unsafe { crate::vfs::close(fd as usize) };
         0
     }
 }
@@ -673,6 +636,59 @@ fn sys_getpid() -> i64 {
     unsafe { core::ptr::read_volatile(core::ptr::addr_of!(CURRENT_PID)) as i64 }
 }
 
+/// sys_getcwd() — retourne le répertoire courant.
+pub fn sys_getcwd(buf: u64, size: u64) -> i64 {
+    unsafe {
+        let cwd = core::ptr::addr_of!(CURRENT_CWD) as *const u8;
+        let len = core::ptr::read_volatile(core::ptr::addr_of!(CURRENT_CWD))
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(0);
+        let copy_len = core::cmp::min(len as u64, size);
+        core::ptr::copy_nonoverlapping(cwd, buf as *mut u8, copy_len as usize);
+        // écrire le NUL terminal si pas déjà présent
+        if copy_len < size {
+            *((buf + copy_len) as *mut u8) = 0;
+        }
+        (copy_len + 1) as i64
+    }
+}
+
+/// sys_chdir() — change le répertoire courant.
+pub fn sys_chdir(path: u64) -> i64 {
+    unsafe {
+        let mut buf = [0u8; 64];
+        for i in 0..63 {
+            let byte = core::ptr::read_volatile((path + i as u64) as *const u8);
+            if byte == 0 { break; }
+            buf[i] = byte;
+        }
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
+        if len == 0 || len >= 64 { return -34; }  // -ENAMETOOLONG
+        let cwd = core::ptr::addr_of_mut!(CURRENT_CWD) as *mut u8;
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), cwd, len + 1);
+    }
+    0
+}
+
+/// sys_dup() — duplique un descripteur de fichier vers le premier fd
+/// libre >= 3 (implémentation via le VFS — CR-1/CR-4).
+pub fn sys_dup(oldfd: u64) -> i64 {
+    match unsafe { crate::vfs::dup(oldfd as usize) } {
+        Ok(fd) => fd as i64,
+        Err(e) => e,
+    }
+}
+
+/// sys_dup2() — duplique oldfd vers newfd.
+/// Ferme `newfd` s'il était ouvert (implémentation via le VFS — CR-1/CR-4).
+pub fn sys_dup2(oldfd: u64, newfd: u64) -> i64 {
+    match unsafe { crate::vfs::dup2(oldfd as usize, newfd as usize) } {
+        Ok(_) => newfd as i64,
+        Err(e) => e,
+    }
+}
+
 /// sys_gettid() — retourne le TID courant (= PID en l'absence de threads).
 fn sys_gettid() -> i64 {
     sys_getpid()
@@ -699,24 +715,22 @@ fn sys_openat(_dirfd: i64, pathname: u64, _flags: u64, _mode: u64) -> i64 {
 
     match crate::initrd::find(name_slice) {
         Some((data, size)) => {
-            let idx = unsafe {
-                let mut fd: Option<usize> = None;
-                for i in 3..MAX_FD {
-                    if FD_TABLE[i].data.is_null() {
-                        fd = Some(i);
-                        break;
-                    }
-                }
-                fd
+            // Inode régulier (fichier du initrd) — la table des fds
+            // est celle du VFS (source de vérité — CR-1).
+            let inode = crate::vfs::Inode {
+                file_type: crate::vfs::FileType::Regular,
+                major: 0,
+                minor: 0,
+                data: data as *const u8,
+                size,
+                pipe: None,
             };
-            match idx {
-                Some(i) => {
-                    unsafe {
-                        FD_TABLE[i] = FileDesc { data, size, pos: 0 };
-                    }
-                    i as i64
+            unsafe {
+                if let Some(fd) = crate::vfs::open(inode, None) {
+                    fd as i64
+                } else {
+                    -28 // -ENOSPC
                 }
-                None => -28, // -ENOSPC
             }
         }
         None => -2, // -ENOENT
@@ -731,6 +745,10 @@ fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 
 
     match unsafe { crate::vfs::lookup(name_slice) } {
         Some(inode) => {
+            // CR-3 : le buffer stat user est valide avant écriture noyau.
+            if !user_buf_ok(statbuf, 144) {
+                return -14; // -EFAULT
+            }
             unsafe {
                 core::ptr::write_bytes(statbuf as *mut u8, 0, 144);
                 let mode = match inode.file_type {
@@ -738,6 +756,7 @@ fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 
                     crate::vfs::FileType::CharDev => 0x21A4,   // S_IFCHR | 0644
                     crate::vfs::FileType::Directory => 0x41ED, // S_IFDIR | 0755
                     crate::vfs::FileType::Pipe => 0x81A4,      // S_IFIFO | 0644
+                    crate::vfs::FileType::ProcFile => 0x81A4,  // S_IFIFO | 0644
                 };
                 core::ptr::write_volatile((statbuf + 16) as *mut u32, mode);
                 core::ptr::write_volatile((statbuf + 40) as *mut u64, inode.size as u64);
@@ -772,9 +791,13 @@ fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 
 #[no_mangle]
 pub extern "C" fn handle_syscall(gpr_ptr: u64) {
     let nr = unsafe { gpr(gpr_ptr, SYS_RAX) } as u64;
-    let arg1 = unsafe { gpr(gpr_ptr, SYS_RDI) };
-    let arg2 = unsafe { gpr(gpr_ptr, SYS_RSI) };
-    let arg3 = unsafe { gpr(gpr_ptr, SYS_RDX) };
+    let arg1 = unsafe { gpr(gpr_ptr, SYS_RDI) } as u64;
+    let arg2 = unsafe { gpr(gpr_ptr, SYS_RSI) } as u64;
+    let arg3 = unsafe { gpr(gpr_ptr, SYS_RDX) } as u64;
+    crate::console::print(format_args!(
+        "SYSCALL nr={} args={:#x} {:#x} {:#x}\n",
+        nr, arg1, arg2, arg3
+    ));
     let arg4 = unsafe { gpr(gpr_ptr, SYS_R10) };
     let arg5 = unsafe { gpr(gpr_ptr, SYS_R8) };
 
@@ -792,6 +815,10 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_FORK => sys_fork(gpr_ptr),
         SYS_EXECVE => sys_execve(arg1, arg2, arg3),
         SYS_WAIT4 => sys_wait4(arg1 as i64, arg2, arg3),
+        SYS_GETCWD => sys_getcwd(arg1 as u64, arg2 as u64),
+        SYS_CHDIR => sys_chdir(arg1 as u64),
+        SYS_DUP => sys_dup(arg1 as u64),
+        SYS_DUP2 => sys_dup2(arg1 as u64, arg2 as u64),
         SYS_PIPE => sys_pipe(arg1),
         SYS_EXIT | SYS_EXIT_GROUP => {
             sys_exit(gpr_ptr, arg1)

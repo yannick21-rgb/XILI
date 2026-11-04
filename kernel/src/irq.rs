@@ -83,13 +83,51 @@ fn handle_timer() {
     tick();
 }
 
+const KEYBOARD_BUFFER_SIZE: usize = 64;
+
+/// Buffer circulaire de scancodes clavier.
+static mut KEYBOARD_BUFFER: [u8; KEYBOARD_BUFFER_SIZE] = [0; KEYBOARD_BUFFER_SIZE];
+static mut KEYBOARD_BUFFER_START: usize = 0;
+static mut KEYBOARD_BUFFER_END: usize = 0;
+static mut KEYBOARD_BUFFER_COUNT: usize = 0;
+
+/// Ajoute un scancode dans le buffer circulaire.
+fn keyboard_buffer_push(sc: u8) {
+    unsafe {
+        if KEYBOARD_BUFFER_COUNT < KEYBOARD_BUFFER_SIZE {
+            KEYBOARD_BUFFER[KEYBOARD_BUFFER_END] = sc;
+            KEYBOARD_BUFFER_END = (KEYBOARD_BUFFER_END + 1) % KEYBOARD_BUFFER_SIZE;
+            KEYBOARD_BUFFER_COUNT += 1;
+        }
+    }
+}
+
+/// Lit un scancode du buffer circulaire, ou None si vide.
+pub fn keyboard_buffer_pop() -> Option<u8> {
+    unsafe {
+        if KEYBOARD_BUFFER_COUNT == 0 {
+            return None;
+        }
+        let sc = KEYBOARD_BUFFER[KEYBOARD_BUFFER_START];
+        KEYBOARD_BUFFER_START = (KEYBOARD_BUFFER_START + 1) % KEYBOARD_BUFFER_SIZE;
+        KEYBOARD_BUFFER_COUNT -= 1;
+        Some(sc)
+    }
+}
+
+/// Nombre de scancodes disponibles dans le buffer.
+pub fn keyboard_buffer_available() -> usize {
+    unsafe { KEYBOARD_BUFFER_COUNT }
+}
+
 /// Handler clavier (IRQ 1, vecteur 33).
 ///
-/// Lit le scancode sur le port 0x60. On stocke le dernier reçu.
+/// Lit le scancode sur le port 0x60 et le stocke dans le buffer
+/// circulaire pour lecture par l'espace utilisateur.
 fn handle_keyboard() {
     let sc = inb(0x60);
+    keyboard_buffer_push(sc);
     unsafe {
-        core::ptr::write_volatile(core::ptr::addr_of_mut!(LAST_SCANCODE), sc);
         let k = core::ptr::read_volatile(core::ptr::addr_of!(KEY_COUNT));
         core::ptr::write_volatile(core::ptr::addr_of_mut!(KEY_COUNT), k + 1);
     }

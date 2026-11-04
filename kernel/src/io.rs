@@ -81,3 +81,33 @@ pub fn inw(port: u16) -> u16 {
     }
     value
 }
+
+/// Écrit un double-mot (32 bits) sur un port d'E/S.
+#[allow(dead_code)]
+#[inline]
+pub fn outl(port: u16, value: u32) {
+    unsafe {
+        asm!(
+            "out dx, eax",
+            in("dx") port,
+            in("eax") value,
+            options(nostack, preserves_flags)
+        );
+    }
+}
+
+/// Lit un double-mot (32 bits) depuis un port d'E/S.
+#[allow(dead_code)]
+#[inline]
+pub fn inl(port: u16) -> u32 {
+    let value: u32;
+    unsafe {
+        asm!(
+            "in eax, dx",
+            out("eax") value,
+            in("dx") port,
+            options(nostack, preserves_flags)
+        );
+    }
+    value
+}

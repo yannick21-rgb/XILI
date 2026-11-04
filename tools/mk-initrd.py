@@ -2,39 +2,13 @@
 """mk-initrd.py — génère un initrd cpio newc pour XILI (J3.5+)."""
 
 import argparse
-import os
 import stat
 import sys
-from dataclasses import dataclass
+import zlib
 from pathlib import Path
 
 
 TRAILER = b"TRAILER!!!"
-HEADER_FMT = (
-    "{magic}"
-    "{ino:08x}"
-    "{mode:08x}"
-    "{uid:08x}"
-    "{gid:08x}"
-    "{nlink:08x}"
-    "{mtime:08x}"
-    "{filesize:08x}"
-    "{dev_major:08x}"
-    "{dev_minor:08x}"
-    "{rdev_major:08x}"
-    "{rdev_minor:08x}"
-    "{namesize:08x}"
-    "{crc:08x}"
-)
-
-
-@dataclass(frozen=True)
-class Entry:
-    name: str
-    data: bytes
-    mode: int = 0o644
-    uid: int = 0
-    gid: int = 0
 
 
 def _pad(data: bytes) -> bytes:
@@ -43,45 +17,41 @@ def _pad(data: bytes) -> bytes:
 
 
 def _crc32(data: bytes) -> int:
-    import zlib
-
     return zlib.crc32(data) & 0xFFFFFFFF
 
 
-def encode_entry(entry: Entry) -> bytes:
-    name = entry.name.encode("utf-8") + b"\x00"
-    namesize = len(name)
-    filesize = len(entry.data)
-    header = HEADER_FMT.format(
-        magic="070701",
-        ino=0,
-        mode=entry.mode | stat.S_IFREG,
-        uid=entry.uid,
-        gid=entry.gid,
-        nlink=1,
-        mtime=0,
-        filesize=filesize,
-        dev_major=0,
-        dev_minor=0,
-        rdev_major=0,
-        rdev_minor=0,
-        namesize=namesize,
-        crc=_crc32(
-            b"070701"
-            + b"\x00" * (8 * 13)
-            + name
-            + entry.data
-        ),
+def encode_entry(name: str, data: bytes, mode: int = 0o644) -> bytes:
+    name_bytes = name.encode("utf-8") + b"\x00"
+    namesize = len(name_bytes)
+    filesize = len(data)
+    header = (
+        "070701"
+        f"{0:08x}"
+        f"{(mode | stat.S_IFREG):08x}"
+        f"{0:08x}"
+        f"{0:08x}"
+        f"{1:08x}"
+        f"{0:08x}"
+        f"{filesize:08x}"
+        f"{0:08x}"
+        f"{0:08x}"
+        f"{0:08x}"
+        f"{0:08x}"
+        f"{namesize:08x}"
+        f"{_crc32(b'070701' + b'\x00' * (8 * 11) + name_bytes + data):08x}"
     ).encode("ascii")
-    return header + _pad(name) + _pad(entry.data)
+    return _pad(header + name_bytes) + _pad(data)
 
 
-def build_cpio(entries: list[Entry]) -> bytes:
+def build_cpio(entries: list[tuple[str, bytes]]) -> bytes:
     out = b""
-    for entry in entries:
-        out += encode_entry(entry)
-    out += encode_entry(Entry(name=TRAILER.decode("utf-8"), data=b""))
-    out += b"\x00" * 4  # align trailer data padding
+    for name, data in entries:
+        out += encode_entry(name, data)
+        rem = len(out) % 4
+        if rem:
+            out += b"\x00" * (4 - rem)
+    out += encode_entry(TRAILER.decode("utf-8"), b"")
+    out += b"\x00" * 4
     return out
 
 
@@ -89,22 +59,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Génère un initrd cpio newc pour XILI.")
     ap.add_argument("out", type=Path, help="Chemin de sortie .cpio")
     ap.add_argument("files", nargs="*", type=Path, help="Fichiers à inclure")
-    ap.add_argument(
-        "--base-dir",
-        type=Path,
-        default=None,
-        help="Répertoire de base pour les fichiers listés",
-    )
     args = ap.parse_args(argv)
 
-    entries: list[Entry] = []
-    base = args.base_dir or Path.cwd()
+    entries: list[tuple[str, bytes]] = []
     for path in args.files:
-        full = path if path.is_absolute() else base / path
-        if not full.exists():
-            print(f"missing: {full}", file=sys.stderr)
+        if not path.exists():
+            print(f"missing: {path}", file=sys.stderr)
             return 1
-        entries.append(Entry(name=path.name, data=full.read_bytes()))
+        entries.append((path.name, path.read_bytes()))
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(build_cpio(entries))

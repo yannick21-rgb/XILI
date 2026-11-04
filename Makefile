@@ -30,7 +30,7 @@ QEMU_UEFI := qemu-system-x86_64 -machine q35 \
              -drive if=pflash,format=raw,unit=0,readonly=on,file=$(OVMF_CODE) \
              -drive if=pflash,format=raw,unit=1,file=$(CURDIR)/ovmf-vars.fd
 
-.PHONY: all build iso iso-uefi esp run run-headless run-uefi run-esp test test-uefi clean
+.PHONY: all build iso iso-uefi esp run run-headless run-uefi run-esp test test-uefi test-net clean
 
 all: iso
 
@@ -93,9 +93,8 @@ run-esp: esp
 # on lit '.' après 'H' (pas de '!'). Les workers M et L doivent aussi
 # apparaître (priorité + aging → tous les workers tournent).
 #
-# J3.4 : VFS + /dev sont initialisés avant le chargement de busybox.
-# J3.5 : busybox est chargé depuis l'initrd et doit produire au moins
-# un caractère sur la sortie standard (preuve que l'ELF a démarré).
+# J3.4 : VFS + /dev sont initialisés avant le chargement de test_j4.
+# J3.5 : test_j4 est chargé depuis l'initrd et doit produire "test_j4: OK".
 test: iso
 	@timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot > $(LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
@@ -109,11 +108,20 @@ test: iso
 	  && grep -q "J2.7b: planificateur + GPR" $(LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(LOG) \
 	  && grep -q "J3.4: VFS + /dev pret" $(LOG) \
-	  && grep -q "J3.5: chargement de 'busybox' depuis l'initrd" $(LOG) \
+	  && grep -q "J3.5: chargement de 'test_j4.elf' depuis l'initrd" $(LOG) \
+	  && grep -q "test_j4: OK" $(LOG) \
 	  && grep "TH" $(LOG) >/dev/null \
 	  && ! grep -q "!" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + J3.5 busybox)" \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + J3.5 test_j4)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
+
+test-net: iso
+	@timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot \
+		-netdev user,id=net0 -device virtio-net,netdev=net0 > $(LOG) 2>&1 || true
+	@grep -q "J5.0: net pret" $(LOG) \
+	  && grep -q "J5.1: virtio-net OK" $(LOG) \
+	  && echo "TEST OK — J5 virtio-net detecte" \
+	  || (echo "TEST ECHEC (J5)"; tail -40 $(LOG); exit 1)
 
 # Critère d'acceptation UEFI de J2 : le noyau boote sous OVMF, sur les deux
 # chemins (ISO hybride et ESP disque).

@@ -1,3 +1,20 @@
+//! XILI — noyau x86_64 `no_std`, écrit de zéro en Rust.
+//!
+//! Architecture du noyau (vue d'ensemble, jalons marquéés dans la séquence) :
+//!
+//!   1. `boot.s` / `isr.s` — BIOS → 32 bits → 64 bits long mode, GDT,
+//!      IDT, TSS, PIC, PIT ; stubs ASM `entry_ring3` / `syscall_entry`.
+//!   2. `mm/` — allocation mémoire : phys bitmap/buddy, slab, paging 4 niveaux.
+//!   3. `task/` — planificateur à priorités avec aging.
+//!   4. `irq.rs` / `idt.rs` — interruptions matérielles et exceptions.
+//!   5. `console/` / `serial.rs` / `vga.rs` — canaux d'émission (UART + VGA).
+//!   6. `vfs/` + `initrd/` + `elf/` + `syscall.rs` — J3 : VFS, initrd cpio,
+//!      loader ELF, stubs syscalls, transition noyau → tâche ring 3.
+//!   7. `run_initrd_elf()` — lancement du programme utilisateur embarqué.
+//!
+//! Le noyau est volontairement single-threadé : le scheduler tourne sur
+//! timer IRQ (hlt), aucune exécution parallèle n'existe encore.
+
 #![no_std]
 #![no_main]
 
@@ -12,6 +29,7 @@ mod io;
 mod irq;
 mod mbi;
 mod mm;
+mod net;
 mod pic;
 mod runtime;
 mod serial;
@@ -359,7 +377,6 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
 
     console::print(format_args!("J3.4: VFS + /dev pret\n"));
     unsafe { crate::vfs::init() };
-    unsafe { crate::vfs::init_dev() };
     unsafe {
         if let Some(tty) = crate::vfs::lookup(b"tty") {
             crate::vfs::open(tty, Some(0));
@@ -368,8 +385,17 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         }
     }
 
-    // Lance busybox depuis l'initrd (J4 bootstrap).
-    run_initrd_elf("busybox", user_stack_top)
+    // J5 : initialisation du sous-système réseau (virtio-net).
+    console::print(format_args!("J5.0: net pret\n"));
+    let _net_ok = unsafe { crate::net::virtio_net::init() };
+    if _net_ok {
+        console::print(format_args!("J5.1: virtio-net OK\n"));
+    } else {
+        console::print(format_args!("J5.1: virtio-net absent (QEMU sans -net ?)\n"));
+    }
+
+    // Lance test_j4.elf depuis l'initrd (J4 validation).
+    run_initrd_elf("test_j4.elf", user_stack_top)
 }
 
 fn run_initrd_elf(name: &str, user_stack_top: u64) -> ! {

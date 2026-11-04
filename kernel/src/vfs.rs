@@ -1,28 +1,17 @@
 /* ============================================================
  * vfs.rs — système de fichiers virtuel minimal (J3.4/J3.5)
  *
- * Fournit :
- *   - un VFS à inodes et dentries,
- *   - un /dev (devtmpfs) avec null, zero, random, tty,
- *   - un lookup de chemin,
- *   - des opérations read/write/close/open par descripteur.
- *
- * Ce module ne connaît que l'initrd (cpio newc) et /dev.
- * Un vrai montage, des pipes et des sockets viendront plus tard.
+ * Surface active conservée :
+ *   - initrd (cpio newc) via initrd::find()
+ *   - /dev : null, zero, random, tty (inodes devices directs)
+ *   - /proc minimal (J4)
+ *   - pipes anonymes (J4)
+ *   - open/close/read/write/dup/dup2 par descripteur
  * ============================================================ */
 
 use crate::initrd;
 use crate::mm::paging::PAGE_SIZE;
 use core::cmp::min;
-
-/* ------------------------------------------------------------ *
- * Constantes de périphériques /dev
- * ------------------------------------------------------------ */
-
-const DEV_NULL_MINOR: u32 = 3;
-const DEV_ZERO_MINOR: u32 = 5;
-const DEV_RANDOM_MINOR: u32 = 8;
-const DEV_TTY_MINOR: u32 = 5; /* tty émulé */
 
 /* ------------------------------------------------------------ *
  * Types de fichiers et inodes
@@ -34,6 +23,7 @@ pub enum FileType {
     CharDev,
     Directory,
     Pipe,
+    ProcFile,
 }
 
 #[derive(Clone, Copy)]
@@ -60,27 +50,6 @@ impl Inode {
 }
 
 /* ------------------------------------------------------------ *
- * Dentry : entrée dans un répertoire
- * ------------------------------------------------------------ */
-
-#[derive(Clone, Copy)]
-pub struct Dentry {
-    pub name: [u8; 64],
-    pub name_len: usize,
-    pub inode: Inode,
-}
-
-impl Dentry {
-    pub const fn empty() -> Self {
-        Dentry {
-            name: [0; 64],
-            name_len: 0,
-            inode: Inode::empty(),
-        }
-    }
-}
-
-/* ------------------------------------------------------------ *
  * Descripteur de fichier ouvert
  * ------------------------------------------------------------ */
 
@@ -95,41 +64,36 @@ pub struct FileDesc {
  * ------------------------------------------------------------ */
 
 const MAX_FILES: usize = 64;
-const MAX_DENTRIES: usize = 64;
 
+// NOTE (J3 hardening) : les tables VFS (`static mut`) restent en
+// `static mut`, et non en `UnsafeCell`. Le noyau est volontairement
+// single-thread (scheduler sur timer IRQ + hlt, aucune exécution
+// parallèle), et l'expérience `UnsafeCell` a montré que l'usage
+// actuel (indexation directe / `get_mut`) ne compile pas avec les
+// patterns voulus ici. Le compromis `static mut` + accès unique via
+// des fonctions verrouillées par le noyau (pas de reentrancy) reste
+// le pattern adopté ; le durcissement se fera au niveau des ops de
+// fichiers quand le VFS sera multi-tâches (J4).
 static mut OPEN_FILES: [Option<FileDesc>; MAX_FILES] = [None; MAX_FILES];
-static mut ROOT_DENTRIES: [Dentry; MAX_DENTRIES] = [Dentry::empty(); MAX_DENTRIES];
-static mut ROOT_COUNT: usize = 0;
 
 /* ------------------------------------------------------------ *
- * Helpers
- * ------------------------------------------------------------ */
-
-unsafe fn str_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a == b
-}
-
-/* ------------------------------------------------------------ *
- * Initialisation du VFS : racine = initrd, puis /dev
+ * Initialisation du VFS
  * ------------------------------------------------------------ */
 
 pub unsafe fn init() {
-    // L'initrd est déjà initialisé par main.rs avant cette fonction.
-    // Ce module ne fait que confirmer que le VFS est prêt.
     crate::console::print(format_args!("vfs : pret\n"));
 }
 
 /* ------------------------------------------------------------ *
  * Lookup d'un chemin vers un Inode.
  *
- * Chemins supportés pour l'instant :
- *   - chemins absolus starts with '/' (strip leading slash)
- *   - un seul composant de nom (pas de récursion /a/b/c)
- *   - d'abord dans l'initrd, puis dans /dev
+ * Chemins supportés :
+ *   - chemins absolus (strip leading '/')
+ *   - un seul composant de nom
+ *   - initrd, /dev (direct), /proc minimal
  * ------------------------------------------------------------ */
 
 pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
-    // Strip leading '/'.
     let path = if !name.is_empty() && name[0] == b'/' {
         &name[1..]
     } else {
@@ -137,7 +101,6 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
     };
 
     if path.is_empty() {
-        // Racine : inode factice directory.
         return Some(Inode {
             file_type: FileType::Directory,
             major: 0,
@@ -160,49 +123,153 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
         });
     }
 
-    // 2. Chercher dans /dev.
-    if path == b"null" {
-        return Some(new_char_dev(DEV_NULL_MINOR, &DEV_NULL_OPS));
+    // 2. /dev : inodes devices directs (pas de table CharDev/FileOps).
+    match path {
+        b"null" => {
+            return Some(Inode {
+                file_type: FileType::CharDev,
+                major: 1,
+                minor: 3,
+                data: core::ptr::null(),
+                size: 0,
+                pipe: None,
+            });
+        }
+        b"zero" => {
+            return Some(Inode {
+                file_type: FileType::CharDev,
+                major: 1,
+                minor: 5,
+                data: core::ptr::null(),
+                size: 0,
+                pipe: None,
+            });
+        }
+        b"random" => {
+            return Some(Inode {
+                file_type: FileType::CharDev,
+                major: 1,
+                minor: 8,
+                data: core::ptr::null(),
+                size: 0,
+                pipe: None,
+            });
+        }
+        b"tty" => {
+            return Some(Inode {
+                file_type: FileType::CharDev,
+                major: 1,
+                minor: 4,
+                data: core::ptr::null(),
+                size: 0,
+                pipe: None,
+            });
+        }
+        _ => {}
     }
-    if path == b"zero" {
-        return Some(new_char_dev(DEV_ZERO_MINOR, &DEV_ZERO_OPS));
-    }
-    if path == b"random" {
-        return Some(new_char_dev(DEV_RANDOM_MINOR, &DEV_RANDOM_OPS));
-    }
-    if path == b"tty" {
-        return Some(new_char_dev(DEV_TTY_MINOR, &DEV_TTY_OPS));
+
+    // 3. /proc minimal (J4).
+    if path.starts_with(b"proc/") {
+        let proc_path = &path[5..];
+        match proc_path {
+            b"self/exe" => {
+                return Some(new_proc_file("/proc/self/exe", proc_self_exe_read));
+            }
+            b"self/fd" => {
+                return Some(new_proc_file("/proc/self/fd", proc_self_fd_read));
+            }
+            b"self/maps" => {
+                return Some(new_proc_file("/proc/self/maps", proc_self_maps_read));
+            }
+            b"meminfo" => {
+                return Some(new_proc_file("/proc/meminfo", proc_meminfo_read));
+            }
+            _ => {}
+        }
     }
 
     None
 }
 
 /* ------------------------------------------------------------ *
- * Opérations sur les fichiers
+ * /proc minimal (J4)
  * ------------------------------------------------------------ */
 
-#[derive(Clone, Copy)]
-pub enum Op {
-    Read,
-    Write,
+static mut PROC_OPS: [Option<fn(*const u8, usize, usize, *const FileDesc) -> usize>; 8] =
+    [None; 8];
+
+unsafe fn new_proc_file(
+    _path: &'static str,
+    read: fn(*const u8, usize, usize, *const FileDesc) -> usize,
+) -> Inode {
+    let mut slot = None;
+    for i in 0..PROC_OPS.len() {
+        if PROC_OPS[i].is_none() {
+            slot = Some(i);
+            break;
+        }
+    }
+    let idx = match slot {
+        Some(i) => i,
+        None => return Inode::empty(),
+    };
+    PROC_OPS[idx] = Some(read);
+    Inode {
+        file_type: FileType::ProcFile,
+        major: 0,
+        minor: idx as u32,
+        data: core::ptr::null(),
+        size: 0,
+        pipe: None,
+    }
 }
 
-pub struct FileOps {
-    pub read: Option<fn(*const u8, usize, usize, *const FileDesc) -> usize>,
-    pub write: Option<fn(*const u8, usize, usize, *const FileDesc) -> usize>,
+unsafe fn proc_ops(minor: u32) -> Option<fn(*const u8, usize, usize, *const FileDesc) -> usize> {
+    let idx = minor as usize;
+    if idx < PROC_OPS.len() {
+        PROC_OPS[idx]
+    } else {
+        None
+    }
 }
 
-/* null : read EOF, write drop */
-fn dev_null_read(_buf: *const u8, _count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
-    0
+fn proc_self_exe_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let line = b"/busybox\n";
+    let n = min(count, line.len());
+    for i in 0..n {
+        unsafe { core::ptr::write_volatile((_buf as *mut u8).add(i), line[i]) };
+    }
+    n
 }
-fn dev_null_write(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
-    count
+
+fn proc_self_fd_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let line = b"0:/dev/tty\n1:/dev/tty\n2:/dev/tty\n";
+    let n = min(count, line.len());
+    for i in 0..n {
+        unsafe { core::ptr::write_volatile((_buf as *mut u8).add(i), line[i]) };
+    }
+    n
 }
-static DEV_NULL_OPS: FileOps = FileOps {
-    read: Some(dev_null_read),
-    write: Some(dev_null_write),
-};
+
+fn proc_self_maps_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let line =
+        b"0x10000000-0x1000b000 r-xp 00000000 00:00 0 /busybox\n\
+          0x1000b000-0x1000c000 rw-p 0000a000 00:00 0\n";
+    let n = min(count, line.len());
+    for i in 0..n {
+        unsafe { core::ptr::write_volatile((_buf as *mut u8).add(i), line[i]) };
+    }
+    n
+}
+
+fn proc_meminfo_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let line = b"MemTotal:       128 MB\n";
+    let n = min(count, line.len());
+    for i in 0..n {
+        unsafe { core::ptr::write_volatile((_buf as *mut u8).add(i), line[i]) };
+    }
+    n
+}
 
 /* ------------------------------------------------------------ *
  * Pipes anonymes (J4)
@@ -240,7 +307,6 @@ static mut PIPE_COUNT: usize = 0;
 
 /// Crée un pipe anonyme et renvoie (read_fd, write_fd) ou None.
 pub unsafe fn pipe() -> Option<(usize, usize)> {
-    // Chercher deux slots libres.
     let mut read_fd = None;
     let mut write_fd = None;
     for i in 3..MAX_FILES {
@@ -258,15 +324,13 @@ pub unsafe fn pipe() -> Option<(usize, usize)> {
         _ => return None,
     };
 
-    // Chercher un slot pipe libre.
     let pipe_idx = PIPE_COUNT;
     if pipe_idx >= PIPES.len() {
         return None;
     }
     PIPE_COUNT += 1;
 
-    // Allouer le buffer.
-    let buf = unsafe { crate::mm::slab::kmalloc(PIPE_BUF) };
+    let buf = crate::mm::slab::kmalloc(PIPE_BUF);
     if buf.is_null() {
         return None;
     }
@@ -283,7 +347,6 @@ pub unsafe fn pipe() -> Option<(usize, usize)> {
     };
     PIPES[pipe_idx] = Some(pipe);
 
-    // Créer les inodes pipe.
     let inode = Inode {
         file_type: FileType::Pipe,
         major: 0,
@@ -293,15 +356,13 @@ pub unsafe fn pipe() -> Option<(usize, usize)> {
         pipe: PIPES[pipe_idx],
     };
 
-    // read fd
     OPEN_FILES[read_fd] = Some(FileDesc { inode, pos: 0 });
-    // write fd
     OPEN_FILES[write_fd] = Some(FileDesc { inode, pos: 0 });
 
     Some((read_fd, write_fd))
 }
 
-fn pipe_read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> {
+unsafe fn pipe_read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> {
     if fd >= MAX_FILES {
         return Err(-9);
     }
@@ -313,17 +374,17 @@ fn pipe_read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> {
     let pipe_idx = file.inode.minor as usize;
     let pipe = match unsafe { PIPES.get_mut(pipe_idx) } {
         Some(Some(ref mut p)) => p,
-        _ => return Err(-19), // -ENODEV
+        _ => return Err(-19),
     };
 
     if pipe.len == 0 {
         if pipe.writers == 0 {
-            return Ok(0); // EOF
+            return Ok(0);
         }
-        return Err(-11); // -EAGAIN
+        return Err(-11);
     }
 
-    let n = core::cmp::min(count, pipe.len);
+    let n = min(count, pipe.len);
     for i in 0..n {
         let b = unsafe { core::ptr::read_volatile(pipe.buf.add(pipe.rpos)) };
         unsafe { core::ptr::write_volatile(buf.add(i), b) };
@@ -333,7 +394,7 @@ fn pipe_read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> {
     Ok(n)
 }
 
-fn pipe_write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i64> {
+unsafe fn pipe_write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i64> {
     if fd >= MAX_FILES {
         return Err(-9);
     }
@@ -349,7 +410,7 @@ fn pipe_write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i64> {
     };
 
     let free = pipe.cap - pipe.len;
-    let n = core::cmp::min(count, free);
+    let n = min(count, free);
     for i in 0..n {
         let b = unsafe { core::ptr::read_volatile(buf.add(i)) };
         unsafe { core::ptr::write_volatile(pipe.buf.add(pipe.wpos), b) };
@@ -359,7 +420,7 @@ fn pipe_write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i64> {
     Ok(n)
 }
 
-fn pipe_close(fd: usize) {
+unsafe fn pipe_close(fd: usize) {
     if fd >= MAX_FILES {
         return;
     }
@@ -383,20 +444,27 @@ fn pipe_close(fd: usize) {
     }
 }
 
-/* zero : read zeros, write drop */
+/* ------------------------------------------------------------ *
+ * Devices : read/write implémentés directement ici.
+ * ------------------------------------------------------------ */
+
+fn dev_null_read(_buf: *const u8, _count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    0
+}
+
+fn dev_null_write(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    count
+}
+
 fn dev_zero_read(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
     unsafe { core::ptr::write_bytes(buf as *mut u8, 0, count) };
     count
 }
+
 fn dev_zero_write(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
     count
 }
-static DEV_ZERO_OPS: FileOps = FileOps {
-    read: Some(dev_zero_read),
-    write: Some(dev_zero_write),
-};
 
-/* random : lecture depuis le port 0x40 (PIT counter, assez pour un début) */
 fn dev_random_read(
     buf: *const u8,
     count: usize,
@@ -405,36 +473,34 @@ fn dev_random_read(
 ) -> usize {
     unsafe {
         for i in 0..count {
-            // Lecture d'un octet sur le port timer 0.
-            // Ce n'est pas cryptographiquement sûr, mais suffit pour busybox.
             let b = crate::io::inb(0x40);
             core::ptr::write_volatile((buf as *mut u8).add(i), b);
         }
     }
     count
 }
+
 fn dev_random_write(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
     count
 }
-static DEV_RANDOM_OPS: FileOps = FileOps {
-    read: Some(dev_random_read),
-    write: Some(dev_random_write),
-};
 
-/* tty : écriture vers le port série, lecture non bloquante depuis le port série */
 fn dev_tty_read(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
     let mut bytes: usize = 0;
-    for i in 0..count {
+    while bytes < count {
         let status = crate::io::inb(crate::serial::COM1 + 5);
         if status & 0x01 == 0 {
+            // Non-blocking : un contexte syscall (ring3 → ring0) ne peut
+            // pas dormir sur un hlt (IRQ masquées par FMASK) → on rend ce
+            // qu'on a (0 = pas de donnée) et le caller fait son polling.
             break;
         }
         let byte = crate::io::inb(crate::serial::COM1);
-        unsafe { core::ptr::write_volatile((buf as *mut u8).add(i), byte) };
+        unsafe { core::ptr::write_volatile((buf as *mut u8).add(bytes), byte) };
         bytes += 1;
     }
     bytes
 }
+
 fn dev_tty_write(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
     for i in 0..count {
         let byte = unsafe { core::ptr::read_volatile((buf as *const u8).add(i)) };
@@ -442,45 +508,36 @@ fn dev_tty_write(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc
     }
     count
 }
-static DEV_TTY_OPS: FileOps = FileOps {
-    read: Some(dev_tty_read),
-    write: Some(dev_tty_write),
-};
 
-/* Pointeur vers les ops d'un périphérique caractère. */
-#[derive(Clone, Copy)]
-struct CharDev {
-    minor: u32,
-    ops: &'static FileOps,
-}
-
-static mut CHARDEVS: [Option<CharDev>; 64] = [None; 64];
-
-unsafe fn register_char_dev(minor: u32, ops: &'static FileOps) {
-    let idx = minor as usize;
-    if idx < CHARDEVS.len() {
-        CHARDEVS[idx] = Some(CharDev { minor, ops });
+fn char_dev_read(
+    inode: &Inode,
+    buf: *const u8,
+    count: usize,
+    pos: usize,
+    _fd: *const FileDesc,
+) -> usize {
+    match inode.minor {
+        3 => dev_null_read(buf, count, pos, _fd),
+        4 => dev_tty_read(buf, count, pos, _fd),
+        5 => dev_zero_read(buf, count, pos, _fd),
+        8 => dev_random_read(buf, count, pos, _fd),
+        _ => 0,
     }
 }
 
-unsafe fn char_dev_ops(minor: u32) -> Option<&'static FileOps> {
-    let idx = minor as usize;
-    if idx < CHARDEVS.len() {
-        CHARDEVS[idx].map(|d| d.ops)
-    } else {
-        None
-    }
-}
-
-unsafe fn new_char_dev(minor: u32, ops: &'static FileOps) -> Inode {
-    register_char_dev(minor, ops);
-    Inode {
-        file_type: FileType::CharDev,
-        major: 1, /* major 1 = char */
-        minor,
-        data: core::ptr::null(),
-        size: 0,
-        pipe: None,
+fn char_dev_write(
+    inode: &Inode,
+    buf: *const u8,
+    count: usize,
+    pos: usize,
+    _fd: *const FileDesc,
+) -> usize {
+    match inode.minor {
+        3 => dev_null_write(buf, count, pos, _fd),
+        4 => dev_tty_write(buf, count, pos, _fd),
+        5 => dev_zero_write(buf, count, pos, _fd),
+        8 => dev_random_write(buf, count, pos, _fd),
+        _ => 0,
     }
 }
 
@@ -489,23 +546,22 @@ unsafe fn new_char_dev(minor: u32, ops: &'static FileOps) -> Inode {
  * ------------------------------------------------------------ */
 
 /// Ouvre un inode et renvoie un descripteur.
-///
 /// Si `fd` est fourni, tente d'ouvrir exactement à ce descripteur
 /// (utilisé pour fd 0/1/2 au démarrage). Sinon, cherche un slot libre
 /// à partir de 3.
 pub unsafe fn open(inode: Inode, fd: Option<usize>) -> Option<usize> {
     match fd {
         Some(f) => {
-            if f < MAX_FILES && unsafe { OPEN_FILES[f] }.is_none() {
-                unsafe { OPEN_FILES[f] = Some(FileDesc { inode, pos: 0 }) };
+            if f < MAX_FILES && OPEN_FILES[f].is_none() {
+                OPEN_FILES[f] = Some(FileDesc { inode, pos: 0 });
                 return Some(f);
             }
             None
         }
         None => {
             for i in 3..MAX_FILES {
-                if unsafe { OPEN_FILES[i] }.is_none() {
-                    unsafe { OPEN_FILES[i] = Some(FileDesc { inode, pos: 0 }) };
+                if OPEN_FILES[i].is_none() {
+                    OPEN_FILES[i] = Some(FileDesc { inode, pos: 0 });
                     return Some(i);
                 }
             }
@@ -528,17 +584,58 @@ pub unsafe fn close(fd: usize) {
         FileType::Pipe => pipe_close(fd),
         _ => {}
     }
-    unsafe { OPEN_FILES[fd] = None };
+    OPEN_FILES[fd] = None;
+}
+
+/// Duplique `oldfd` vers le premier fd libre >= 3.
+/// Renvoie le nouveau fd, ou -errno.
+pub unsafe fn dup(oldfd: usize) -> Result<usize, i64> {
+    if oldfd >= MAX_FILES {
+        return Err(-9);
+    }
+    let file = match OPEN_FILES[oldfd] {
+        Some(ref f) => f,
+        None => return Err(-9),
+    };
+    for i in 3..MAX_FILES {
+        if OPEN_FILES[i].is_none() {
+            let mut new_file = *file;
+            new_file.pos = 0;
+            OPEN_FILES[i] = Some(new_file);
+            return Ok(i);
+        }
+    }
+    Err(-28)
+}
+
+/// Duplique `oldfd` vers `newfd`. Ferme `newfd` s'il est déjà ouvert.
+/// Renvoie `newfd`, ou -errno.
+pub unsafe fn dup2(oldfd: usize, newfd: usize) -> Result<usize, i64> {
+    if oldfd >= MAX_FILES || newfd >= MAX_FILES {
+        return Err(-9);
+    }
+    let file = match OPEN_FILES[oldfd] {
+        Some(ref f) => f,
+        None => return Err(-9),
+    };
+    if OPEN_FILES[newfd].is_some() {
+        close(newfd);
+    }
+    let mut new_file = *file;
+    new_file.pos = 0;
+    OPEN_FILES[newfd] = Some(new_file);
+    Ok(newfd)
 }
 
 /// Lit jusqu'à `count` octets depuis `fd` dans `buf`.
 /// Renvoie le nombre d'octets lus, ou -errno.
 pub unsafe fn read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> {
     if fd >= MAX_FILES {
-        return Err(-9); // -EBADF
+        return Err(-9);
     }
-    let file = match unsafe { &mut OPEN_FILES[fd] } {
-        Some(f) => f,
+    let binding = unsafe { OPEN_FILES[fd] };
+    let file = match binding {
+        Some(ref f) => f,
         None => return Err(-9),
     };
 
@@ -553,92 +650,57 @@ pub unsafe fn read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> 
             let n = min(count, size - pos);
             for i in 0..n {
                 let b = core::ptr::read_volatile(data.add(pos + i));
-                core::ptr::write_volatile(buf.add(i), b);
+                unsafe { core::ptr::write_volatile(buf.add(i), b) };
             }
-            if let Some(ref mut f) = unsafe { OPEN_FILES[fd] } {
+            if let Some(ref mut f) = OPEN_FILES[fd] {
                 f.pos = pos + n;
             }
             Ok(n)
         }
         FileType::CharDev => {
-            let ops = char_dev_ops(file.inode.minor)
-                .ok_or(-19)?;
-            let read_fn = ops.read.ok_or(-38)?;
-            let n = read_fn(buf as *const u8, count, file.pos, file as *const FileDesc);
-            if let Some(ref mut f) = unsafe { OPEN_FILES[fd] } {
+            let n = unsafe { char_dev_read(&file.inode, buf, count, file.pos, file as *const FileDesc) };
+            if let Some(ref mut f) = OPEN_FILES[fd] {
+                f.pos += n;
+            }
+            Ok(n)
+        }
+        FileType::ProcFile => {
+            let ops = unsafe { proc_ops(file.inode.minor) }.ok_or(-19)?;
+            let n = unsafe { ops(buf as *const u8, count, file.pos, file as *const FileDesc) };
+            if let Some(ref mut f) = OPEN_FILES[fd] {
                 f.pos += n;
             }
             Ok(n)
         }
         FileType::Directory => Err(-21),
-        FileType::Pipe => pipe_read(fd, buf, count),
+        FileType::Pipe => unsafe { pipe_read(fd, buf, count) },
     }
 }
 
 /// Écrit jusqu'à `count` octets depuis `buf` vers `fd`.
+/// Renvoie le nombre d'octets écrits, ou -errno.
 pub unsafe fn write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i64> {
     if fd >= MAX_FILES {
         return Err(-9);
     }
-    let file = match unsafe { &mut OPEN_FILES[fd] } {
-        Some(f) => f,
+    let binding = unsafe { OPEN_FILES[fd] };
+    let file = match binding {
+        Some(ref f) => f,
         None => return Err(-9),
     };
 
     match file.inode.file_type {
-        FileType::Regular => {
-            // Écriture dans l'initrd : non supportée pour l'instant.
-            Err(-30) // -EROFS
-        }
+        FileType::Regular => Err(-30),
         FileType::CharDev => {
-            let ops = char_dev_ops(file.inode.minor)
-                .ok_or(-19)?;
-            let write_fn = ops.write.ok_or(-38)?;
-            let n = write_fn(buf, count, file.pos, file as *const FileDesc);
-            if let Some(ref mut f) = unsafe { OPEN_FILES[fd] } {
+            let n =
+                unsafe { char_dev_write(&file.inode, buf, count, file.pos, file as *const FileDesc) };
+            if let Some(ref mut f) = OPEN_FILES[fd] {
                 f.pos += n;
             }
             Ok(n)
         }
         FileType::Directory => Err(-21),
-        FileType::Pipe => pipe_write(fd, buf, count),
+        FileType::Pipe => unsafe { pipe_write(fd, buf, count) },
+        FileType::ProcFile => Err(-30),
     }
-}
-
-/// Renvoie la position courante dans `fd`.
-pub unsafe fn tell(fd: usize) -> Result<usize, i64> {
-    if fd >= MAX_FILES {
-        return Err(-9);
-    }
-    match unsafe { OPEN_FILES[fd] } {
-        Some(ref f) => Ok(f.pos),
-        None => Err(-9),
-    }
-}
-
-/// Change la position dans `fd`.
-pub unsafe fn seek(fd: usize, pos: usize) -> Result<usize, i64> {
-    if fd >= MAX_FILES {
-        return Err(-9);
-    }
-    if let Some(ref mut f) = unsafe { OPEN_FILES[fd] } {
-        f.pos = pos;
-        Ok(pos)
-    } else {
-        Err(-9)
-    }
-}
-
-/* ------------------------------------------------------------ *
- * Initialisation de /dev au démarrage
- * ------------------------------------------------------------ */
-
-pub unsafe fn init_dev() {
-    // Enregistrer les périphériques caractères dans le lookup /dev.
-    // Le lookup se fait par nom, donc on prépare juste la table des ops.
-    register_char_dev(DEV_NULL_MINOR, &DEV_NULL_OPS);
-    register_char_dev(DEV_ZERO_MINOR, &DEV_ZERO_OPS);
-    register_char_dev(DEV_RANDOM_MINOR, &DEV_RANDOM_OPS);
-    register_char_dev(DEV_TTY_MINOR, &DEV_TTY_OPS);
-    crate::console::print(format_args!("vfs : /dev (null zero random tty) pret\n"));
 }

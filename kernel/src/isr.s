@@ -314,7 +314,7 @@ entry_ring3:
 
     pushq $0x33                      # User SS (0x30 | RPL=3)
     pushq %rsi                        # User RSP (stack top)
-    pushq $0x2                         # User RFLAGS (IF=0, bit1=1)
+    pushq $0x0                        # User RFLAGS (IF=0)
     pushq $0x2B                       # User CS (0x28 | RPL=3)
     pushq %rdi                        # User RIP (entry point)
     iretq

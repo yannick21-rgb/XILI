@@ -64,22 +64,29 @@ pub fn init(archive: &'static [u8]) {
             let filesize = parse_hex8(archive, off + 54) as usize;
             let namesize = parse_hex8(archive, off + 94) as usize;
 
-            off += 110;
+            let mut name_off = off + 110;
+            if name_off < archive.len() && archive[name_off] == 0 {
+                name_off = (name_off + 3) & !3;
+            }
+            off = name_off;
 
             if off + namesize > archive.len() {
                 break;
             }
             let name = &archive[off..off + namesize];
 
-            let name_padded = (namesize + 3) & !3;
-            off += name_padded;
+            // Le data commence juste après le nom NUL-terminé, **aligné sur un
+            // multiple de 4 octets** (champ nom = header 110 + nom + padding).
+            // Ne PAS faire `off += round4(namesize)` : l'alignement est relatif
+            // à l'adresse absolue, pas à la taille du champ.
+            let data_off = (off + namesize + 3) & !3;
+            off = data_off;
 
             if off + filesize > archive.len() {
                 break;
             }
             let data = archive.as_ptr().add(off);
-            let data_padded = (filesize + 3) & !3;
-            off += data_padded;
+            off = (off + filesize + 3) & !3;
 
             // TRAILER!!! marque la fin de l'archive.
             if name.starts_with(b"TRAILER!!!") {
@@ -88,8 +95,17 @@ pub fn init(archive: &'static [u8]) {
 
             if count < MAX_FILES && namesize > 1 {
                 let e = &mut ENTRIES[count];
-                let nl = (namesize - 1).min(MAX_NAME - 1);
-                e.name[..nl].copy_from_slice(&name[..nl]);
+                let raw_name = &name[..namesize.min(MAX_NAME + 1)];
+                let basename = match raw_name.iter().rposition(|&b| b == b'/') {
+                    Some(pos) => &raw_name[pos + 1..],
+                    None => raw_name,
+                };
+                let basename = match basename.iter().position(|&b| b == 0) {
+                    Some(pos) => &basename[..pos],
+                    None => basename,
+                };
+                let nl = basename.len().min(MAX_NAME - 1);
+                e.name[..nl].copy_from_slice(&basename[..nl]);
                 e.name_len = nl;
                 e.data = data;
                 e.size = filesize;
@@ -98,6 +114,12 @@ pub fn init(archive: &'static [u8]) {
         }
 
         ENTRY_COUNT = count;
+        for i in 0..count {
+            let e = &ENTRIES[i];
+            let name_slice = &e.name[..e.name_len];
+            let name_str = core::str::from_utf8(name_slice).unwrap_or("<inv>");
+            crate::console::print(format_args!("  initrd[{}]: \"{}\" size={}\n", i, name_str, e.size));
+        }
         crate::console::print(format_args!(
             "initrd : {} fichier(s) charge(s) depuis cpio newc\n",
             count

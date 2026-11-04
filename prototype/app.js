@@ -1135,23 +1135,12 @@ document.addEventListener("keydown", (e) => {
 /* --- Démarrage ------------------------------------------------------------------------------ */
 
 function demarrer() {
-  ajouterEpingle({ nom: "Système", type: "dossier", x: 24, y: 24, chemin: "/systeme" });
-  const t = ouvrirTerminal();
-  const f = ouvrirFichiers();
-
-  // Côte à côte quand la largeur le permet (cible 1280×800).
-  const largeur = bureau.clientWidth;
-  if (largeur >= 960) {
-    const w = Math.floor((largeur - 48) / 2);
-    const hauteur = bureau.clientHeight - 64;
-    const placer = (id, x) => {
-      const fen = fenetres.get(id);
-      if (!fen) return;
-      Object.assign(fen.el.style, { left: x + "px", top: "24px", width: w + "px", height: hauteur + "px" });
-    };
-    placer(t, 16);
-    placer(f, 32 + w);
-  }
+  // État par défaut : bureau **vide et épinglable** (§10.3).
+  // Aucune fenêtre n'est ouverte automatiquement : le terminal et les
+  // fichiers s'ouvrent sur demande (menu « Ouvrir le terminal / Fichiers »,
+  // ou Ctrl+Alt+T / Ctrl+Alt+F, §10.4). L'ouverture de Terminal + Fichiers
+  // côte à côte est un **mode démo**, pas l'état initial.
+  zoneEpingles.textContent = "";
 }
 
 demarrer();

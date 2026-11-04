@@ -3,6 +3,7 @@
  * ============================================================ */
 
 use core::mem::size_of;
+use crate::console;
 
 /* ------------------------------------------------------------
  * Structures ELF64.
@@ -99,17 +100,51 @@ unsafe fn parse_phdr(data: &[u8], off: usize) -> Option<Elf64Phdr> {
  * ------------------------------------------------------------ */
 
 pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
+    console::print(format_args!("load_elf: start data.len={}\n", data.len()));
     if data.len() < core::mem::size_of::<Elf64Ehdr>() {
+        console::print(format_args!("load_elf: FAIL header too short\n"));
         return None;
     }
 
     let ehdr = &*(data.as_ptr() as *const Elf64Ehdr);
 
-    if ehdr.e_ident[0..4] != ELF_MAGIC { return None; }
-    if ehdr.e_ident[4] != ELFCLASS64 { return None; }
-    if ehdr.e_ident[5] != ELFDATA2LSB { return None; }
-    if ehdr.e_machine != EM_X86_64 { return None; }
-    if ehdr.e_phentsize as usize != size_of::<Elf64Phdr>() { return None; }
+    console::print(format_args!("load_elf: BEFORE_MAGIC\n"));
+    console::print(format_args!(
+        "load_elf: magic={:02x} {:02x} {:02x} {:02x} class={} endian={} machine={} type={}\n",
+        ehdr.e_ident[0], ehdr.e_ident[1], ehdr.e_ident[2], ehdr.e_ident[3],
+        ehdr.e_ident[4], ehdr.e_ident[5], ehdr.e_machine,
+        u16::from_le_bytes([ehdr.e_ident[12], ehdr.e_ident[13]])
+    ));
+    console::print(format_args!("load_elf: AFTER_MAGIC\n"));
+    if ehdr.e_ident[0..4] != ELF_MAGIC {
+        console::print(format_args!("load_elf: FAIL bad magic\n"));
+        return None;
+    }
+    if ehdr.e_ident[4] != ELFCLASS64 {
+        console::print(format_args!("load_elf: FAIL bad class\n"));
+        return None;
+    }
+    if ehdr.e_ident[5] != ELFDATA2LSB {
+        console::print(format_args!("load_elf: FAIL bad endian\n"));
+        return None;
+    }
+    if ehdr.e_machine != EM_X86_64 {
+        console::print(format_args!("load_elf: FAIL bad machine={}\n", ehdr.e_machine));
+        return None;
+    }
+    if ehdr.e_phentsize as usize != size_of::<Elf64Phdr>() {
+        console::print(format_args!(
+            "load_elf: FAIL phentsize {} != sizeof(Elf64Phdr) {}\n",
+            ehdr.e_phentsize,
+            size_of::<Elf64Phdr>()
+        ));
+        return None;
+    }
+
+    console::print(format_args!(
+        "load_elf: ehdr ok phoff={} phnum={} phentsize={} entry={:#x}\n",
+        ehdr.e_phoff, ehdr.e_phnum, ehdr.e_phentsize, ehdr.e_entry
+    ));
 
     let phoff = ehdr.e_phoff as usize;
     let phnum = ehdr.e_phnum;
@@ -119,22 +154,20 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
     for i in 0..phnum as usize {
         let off = phoff + i * size_of::<Elf64Phdr>();
         let phdr = parse_phdr(data, off)?;
+        console::print(format_args!("ELF segment {}: type={} vaddr={:#x} offset={:#x} filesz={} memsz={}\n", i, phdr.p_type, phdr.p_vaddr, phdr.p_offset, phdr.p_filesz, phdr.p_memsz));
 
         match phdr.p_type {
             PT_PHDR => {
                 phdr_vaddr = phdr.p_vaddr;
             }
             PT_LOAD => {
-                if (phdr.p_vaddr & 0xFFF) != (phdr.p_offset & 0xFFF) {
-                    return None;
-                }
-
-                let mut page_flags =
-                    crate::mm::paging::PRESENT | crate::mm::paging::WRITABLE;
+                let mut page_flags = crate::mm::paging::PRESENT
+                    | crate::mm::paging::WRITABLE
+                    | crate::mm::paging::USER;
                 if phdr.p_flags & PF_X == 0 {
                     page_flags |= crate::mm::paging::NOEXEC;
                 }
-                
+
                 let seg_vaddr = phdr.p_vaddr;
                 let seg_offset = phdr.p_offset as usize;
                 let filesz = phdr.p_filesz as usize;
@@ -145,15 +178,16 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
 
                 for page_idx in 0..num_pages {
                     let page_vaddr =
-                        (seg_vaddr & !0xFFF) + page_idx as u64 * PAGE_SIZE as u64;
+                        seg_vaddr + page_idx as u64 * PAGE_SIZE as u64;
 
+                    console::print(format_args!("  map page {} -> {:#x}\n", page_idx, page_vaddr));
                     let paddr = crate::mm::phys::alloc_page()
                         .expect("ELF: OOM") as u64;
 
                     crate::mm::paging::map_page(page_vaddr, paddr, page_flags);
 
                     let file_page_off =
-                        seg_offset + page_idx * PAGE_SIZE - page_offset_in_seg;
+                        seg_offset + page_idx * PAGE_SIZE;
 
                     if file_page_off < data.len()
                         && file_page_off < seg_offset + filesz
@@ -185,11 +219,15 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                console::print(format_args!("ELF segment {}: skipped (type={})\n", i, phdr.p_type));
+            }
         }
     }
 
-        Some(ElfInfo {
+    console::print(format_args!("load_elf: done\n"));
+
+    Some(ElfInfo {
         entry: ehdr.e_entry,
         phdr_vaddr,
         phnum,
@@ -208,16 +246,14 @@ pub unsafe fn build_stack(
 ) -> u64 {
     const ARG_MAX: usize = 32;
 
-    let mut argc: usize = 0;
+    let argc: usize = 1;
     let mut argv: [u64; ARG_MAX] = [0; ARG_MAX];
-    let mut envp: [u64; ARG_MAX] = [0; ARG_MAX];
-    let mut envc: usize = 0;
+    let envp: [u64; ARG_MAX] = [0; ARG_MAX];
+    let envc: usize = 0;
     let mut auxv: [AuxvEntry; 8] = [AuxvEntry { a_type: 0, a_val: 0 }; 8];
     let mut aux_idx: usize = 0;
 
-    argc = 1;
     argv[0] = stack_base_vaddr - 8 * (name.len() + 1) as u64;
-    envc = 0;
 
     auxv[aux_idx] = AuxvEntry { a_type: AT_PHDR, a_val: elf.phdr_vaddr };
     aux_idx += 1;

@@ -76,6 +76,7 @@ struct IstStack {
     bytes: [u8; 8192],
 }
 
+#[link_section = ".data"]
 static mut TSS: Tss = Tss {
     _rsv1: 0,
     _rsv2: 0,
@@ -95,6 +96,7 @@ static mut TSS: Tss = Tss {
     _rsv5: 0,
 };
 
+#[link_section = ".data"]
 static mut IST1_STACK: IstStack = IstStack { bytes: [0; 8192] };
 
 /// --- Sélecteurs de segment (GDT) ---
@@ -132,16 +134,17 @@ struct Gdt {
     entries: [u64; 8],
 }
 
+#[link_section = ".data"]
 static mut GDT: Gdt = Gdt {
     entries: [
         0x0000_0000_0000_0000, // [0] null
-        0x00AF_9A00_0000_FFFF, // [1] code R0  0x08 (exec/read, DPL=0, L=0 — CS bootloader)
-        0x00AF_9200_0000_FFFF, // [2] données R0 0x10 (data, DPL=0)
-        0,                     // [3] TSS low   0x18 (mis à jour par init)
+        0x00AF_9A00_0000_FFFF, // [1] code R0  0x08
+        0x00AF_9200_0000_FFFF, // [2] données R0 0x10
+        0,                     // [3] TSS low   0x18
         0,                     // [4] TSS high  0x20
-        0x00BF_FA00_0000_FFFF, // [5] code R3   0x28 (exec/read 64-bit, DPL=3, L=1, G=1)
-        0x00AF_F200_0000_FFFF, // [6] donnees R3 0x30 (data, DPL=3)
-        0x00BF_9A00_0000_FFFF, // [7] code R0 64 0x38 (exec/read 64-bit, DPL=0, L=1, G=1)
+        0x00BF_FA00_0000_FFFF, // [5] code R3   0x28
+        0x00AF_F200_0000_FFFF, // [6] donnees R3 0x30
+        0x00BF_9A00_0000_FFFF, // [7] code R0 64 0x38
     ],
 };
 

@@ -370,6 +370,7 @@ Ce sont les points qui bloquent, et ce qui les lèverait.
 | 6 | Couleur d'accent définitive | **tranchée** (2026-10-28) : palette « Encre et soleil » (§4) — orange brûlé `#FF6B2C` en principal, safran `#FFC53D` en secondaire ; assombrissements clairs au §4.3 |
 | 7 | Rapport à l'esthétique Pop!_OS / COSMIC | **tranchée** (Jean Yannick, 2026-10-29) : on emprunte la **mosaïque automatique** (§10.6) et l'**esthétique** (coins arrondis ouverts, §6). **Palette conservée** — Encre et soleil ne bouge pas. Ni dock, ni panneau latéral, ni lanceur, ni contrôles en haut à droite |
 | 8 | Halo lumineux de la lisière | **tranchée** (2026-10-29) : flou réel au-dessus de la bande 2 px. Exception §3 **provisoire** — le coût llvmpipe ne se mesurera qu'à J7 (§10.5) |\n| 9 | Indicateurs système (volume, Wi-Fi, batterie, luminosité) | **tranchée** (Jean Yannick, 2026-10-30) : icônes dans la barre droite + **popover réglages rapides** ancré (§10.7). Alertes au `primary` seulement ; état persistant en maquette (`localStorage`) |
+| 10 | **Gel des jetons de design** (§4 → §7) | **gelé** (Jean Yannick, 2026-10-30) : la palette (§4), la typographie (§5), la géométrie (§6) et le mouvement (§7) sont **figés** — ce sont les seules sections qui ne bougent plus après validation. Ce gel libère le chantier du compositeur (J7) : le design existe déjà, on porte, on ne redessine pas. Ce qui reste à valider côté contenu/UX : la **voix** (§8) et l'ergonomie des écrans (§10) |
 
 ---
 
@@ -420,6 +421,12 @@ applications — n'importe quoi se pose dessus.
 La maquette ouvre **Terminal + Fichiers**, côte à côte. Le terminal est un
 citoyen de première classe (§5) et se prouve en le manipulant ; les fichiers
 montrent la navigation et l'épinglage.
+
+> **Ajustement du 2026-10-30 (décision de l'utilisateur) :** cet état est un
+> *mode démo*. L'état de démarrage normal est le **bureau vide et épinglable**
+> (§10.3) — aucune fenêtre n'est ouverte automatiquement. Les deux fenêtres
+> restent ouvables via le menu et les raccourcis. Ce changement est dans le
+> code (`demarrer()` de la maquette).
 
 ### 10.5 Lisière lumineuse (décision 2026-10-28)
 

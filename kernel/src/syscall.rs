@@ -140,18 +140,75 @@ const SYS_TEST_DONE: u64 = 0x1FF;
  * États de processus (J4)
  * ------------------------------------------------------------ */
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcState {
     Running,
+    Ready,
+    Waiting,
     Zombie,
 }
 
 #[derive(Clone, Copy)]
 pub struct Process {
+    pub pid: u64,
     pub ppid: u64,
+    pub parent_task: usize,
     pub state: ProcState,
     pub exit_code: i64,
     pub task_id: usize,
+}
+
+/// Contexte userland suspendu (bloc GPR de syscall_entry, 15×u64).
+/// `Some` = processus suspendu et reprenable (Ready ou Waiting).
+#[derive(Clone, Copy)]
+struct SavedCtx {
+    gprs: [u64; 15],
+    pid: u64,
+}
+
+static mut CTXS: [Option<SavedCtx>; task::MAX_TASKS] = [None; task::MAX_TASKS];
+/// Piles userland par tâche (8 Kio chacune, 2 piles : parent relu via
+/// execve ne fork qu'une fois dans nos sondes) : l'enfant fork reçoit
+/// une copie de la pile du parent, sinon parent/enfant se corrompent
+/// mutuellement l'adresse de retour (pile partagée, même CR3).
+static mut USER_STACKS: [[u8; 8192]; 2] = [[0; 8192]; 2];
+/// État par tâche userland : 0 Running, 1 Ready, 2 Waiting, 3 Zombie, 4 Free.
+static mut TASK_STATE: [u8; task::MAX_TASKS] = [4; task::MAX_TASKS];
+/// Switch coopératif demandé par wait4/exit, appliqué par handle_syscall
+/// après l'écriture de RAX (usize::MAX = aucun).
+static mut PENDING_SWITCH: usize = usize::MAX;
+
+unsafe fn save_ctx(task_id: usize, pid: u64, gpr_ptr: u64) {
+    if task_id >= task::MAX_TASKS {
+        return;
+    }
+    let mut gprs = [0u64; 15];
+    for i in 0..15 {
+        gprs[i] = gpr(gpr_ptr, i * 8);
+    }
+    CTXS[task_id] = Some(SavedCtx { gprs, pid });
+}
+
+unsafe fn load_ctx(task_id: usize, gpr_ptr: u64) -> Option<u64> {
+    if task_id >= task::MAX_TASKS {
+        return None;
+    }
+    let ctx = CTXS[task_id].take()?;
+    for i in 0..15 {
+        set_gpr(gpr_ptr, i * 8, ctx.gprs[i]);
+    }
+    Some(ctx.pid)
+}
+
+unsafe fn find_ready(exclude: usize) -> Option<usize> {
+    for i in 0..task::MAX_TASKS {
+        if i != exclude && TASK_STATE[i] == 1 {
+            if CTXS[i].is_some() {
+                return Some(i);
+            }
+        }
+    }
+    None
 }
 
 static mut PROCESSES: [Option<Process>; 16] = [None; 16];
@@ -192,58 +249,55 @@ fn sys_fork(gpr_ptr: u64) -> i64 {
         return -12;
     }
 
-    // 3. Enregistrer le processus.
+    // 3. Enregistrer le processus (pid et parent_task pour wait4/exit).
+    let parent_task = unsafe {
+        if USER_TASK_ID != 0 { USER_TASK_ID } else { task::CURRENT }
+    };
+    let parent_pid = unsafe { CURRENT_PID };
     unsafe {
         PROCESSES[child_task_id] = Some(Process {
-            ppid: CURRENT_PID,
-            state: ProcState::Running,
+            pid,
+            ppid: parent_pid,
+            parent_task,
+            state: ProcState::Ready,
             exit_code: 0,
             task_id: child_task_id,
         });
+        TASK_STATE[child_task_id] = 1; // Ready
     }
 
-    // 4. Copier le contexte userland du parent dans l'enfant.
-    //    Le parent est un userland : sa tâche porte un frame iretq
-    //    (40 octets) au sommet de sa pile. On copie ce frame, puis on
-    //    ajuste RAX à 0 pour l'enfant.
+    // 4. Copier le contexte userland du parent dans l'enfant (J4-C
+    // coopératif) : copie du bloc GPR de syscall_entry (15×u64, offsets
+    // i*8 — RAX=0, RCX=RIP, R11=RFLAGS, R15=user RSP). L'enfant reprend
+    // après le syscall fork avec RAX=0 ; le parent continue avec RAX=pid.
+    // L'enfant reçoit AUSSI sa propre pile userland (copie de la zone
+    // active du parent) : sans elle, parent et enfant partagent la même
+    // pile et s'écrasent l'adresse de retour (corruption).
     unsafe {
-        let current_task_id = if USER_TASK_ID != 0 {
-            USER_TASK_ID
-        } else {
-            task::CURRENT
-        };
-        let current_task = &task::TASKS[current_task_id];
+        let mut gprs = [0u64; 15];
+        for i in 0..15 {
+            gprs[i] = gpr(gpr_ptr, i * 8);
+        }
+        gprs[0] = 0; // RAX = 0 pour l'enfant
+
+        // Pile séparée : copie 4 Kio à partir du RSP parent, placée en
+        // haut de la pile enfant, RSP ajusté d'autant.
+        let parent_rsp = gprs[14]; // R15 = user RSP
+        const COPY: usize = 4096;
+        let slot = if child_task_id < 2 { child_task_id } else { child_task_id % 2 };
+        let child_base = USER_STACKS[slot].as_mut_ptr() as u64;
+        let child_rsp = child_base + 8192 - COPY as u64;
+        core::ptr::copy_nonoverlapping(parent_rsp as *const u8, child_rsp as *mut u8, COPY);
+        gprs[14] = child_rsp;
+
+        CTXS[child_task_id] = Some(SavedCtx { gprs, pid });
+
+        // Marquer la tâche enfant comme userland (pour l'observabilité ;
+        // le scheduler timer l'exclut, voir task.rs).
         let child_task = &mut task::TASKS[child_task_id];
-
-        let current_rsp = current_task.saved_rsp;
-        let current_stack_top =
-            current_task.stack.as_ptr() as u64 + task::TASK_STACK_SIZE as u64;
-
-        // Copier le frame iretq (40 octets) au sommet de la pile enfant.
-        let child_stack_top =
-            child_task.stack.as_ptr() as u64 + task::TASK_STACK_SIZE as u64;
-        let child_rsp = child_stack_top - 40;
-
-        core::ptr::copy_nonoverlapping(
-            current_rsp as *const u8,
-            child_rsp as *mut u8,
-            40,
-        );
-
-        child_task.saved_rsp = child_rsp;
+        child_task.is_user = true;
         child_task.priority = 2;
         child_task.age = 0;
-        child_task.is_user = true;
-
-        // Dans l'enfant, RAX = 0 (retour fork). RAX est le premier mot
-        // du bloc GPR… mais ici le frame est un frame iretq, pas un bloc
-        // GPR. Le retour fork est porté par le stub de reprise : on
-        // place 0 dans le registre RAX via un champ dédié du frame.
-        // Le plus simple : le frame iretq ne porte pas RAX. On utilise
-        // donc une convention : le stub lit RAX dans le bloc GPR qui
-        // suit le frame. On écrit 0 à cet emplacement.
-        let child_gpr = child_rsp - task::GPR_SAVE_SIZE as u64;
-        core::ptr::write_volatile(child_gpr as *mut u64, 0u64); // RAX = 0
 
         // Dans le parent, RAX = pid de l'enfant.
         set_gpr(gpr_ptr, SYS_RAX, pid as u64);
@@ -356,6 +410,8 @@ pub unsafe fn register_user_task(task_id: usize, user_rip: u64, user_rsp: u64) {
     task.priority = 1;
     task.age = 0;
     task.is_user = true;
+    TASK_STATE[task_id] = 0; // Running
+    CTXS[task_id] = None;
 }
 
 /// Charge un ELF depuis l'initrd et retourne (entry, stack_top).
@@ -410,6 +466,16 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
         None => return -8, // -ENOEXEC
     };
 
+    // J4-C : execve remplace l'image — invalider tout contexte suspendu
+    // du processus courant (il repart à entry, RAX/registres frais).
+    unsafe {
+        let cur = if USER_TASK_ID != 0 { USER_TASK_ID } else { task::CURRENT };
+        if cur < task::MAX_TASKS {
+            CTXS[cur] = None;
+            TASK_STATE[cur] = 0;
+        }
+    }
+
     // 3. Sauter vers le point d'entrée (ne retourne pas).
     unsafe { crate::entry_ring3(entry, stack_top) };
 }
@@ -420,42 +486,59 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
 /// `wstatus` peut être NULL. Retourne le PID de l'enfant terminé, ou
 /// -errno (-ECHILD si aucun enfant zombie).
 fn sys_wait4(pid: i64, wstatus: u64, _options: u64) -> i64 {
+    // Signature à tâche : sys_wait4 ne connaît pas gpr_ptr, donc le switch
+    // coopératif vers l'enfant est demandé via PENDING_SWITCH et exécuté
+    // par handle_syscall après l'écriture de RAX (voir plus bas).
+    // Ici on choisit seulement la cible.
     let current_pid = unsafe { CURRENT_PID };
 
-    // Sélectionner l'enfant à attendre.
+    // 1) Enfant déjà zombie -> retour immédiat (pid réel, pas task_id).
     let target: Option<usize> = unsafe {
         let mut found = None;
         for i in 0..PROCESSES.len() {
             if let Some(proc) = PROCESSES[i] {
-                if proc.ppid == current_pid && proc.state == ProcState::Zombie {
-                    if pid == -1 || proc.task_id as i64 == pid {
-                        found = Some(i);
-                        break;
-                    }
+                if proc.ppid == current_pid && proc.state == ProcState::Zombie
+                    && (pid == -1 || proc.pid as i64 == pid)
+                {
+                    found = Some(i);
+                    break;
                 }
             }
         }
         found
     };
 
-    match target {
-        Some(i) => {
-            let proc = unsafe { PROCESSES[i] }.unwrap();
-            // Écrire le statut de sortie si le buffer est fourni.
-            if wstatus != 0 && user_buf_ok(wstatus, 4) {
-                unsafe {
-                    let code = (proc.exit_code as i32) << 8;
-                    core::ptr::write_volatile(wstatus as *mut i32, code);
+    if let Some(i) = target {
+        let proc = unsafe { PROCESSES[i] }.unwrap();
+        if wstatus != 0 && user_buf_ok(wstatus, 4) {
+            unsafe {
+                let code = (proc.exit_code as i32) << 8;
+                core::ptr::write_volatile(wstatus as *mut i32, code);
+            }
+        }
+        unsafe {
+            PROCESSES[i] = None;
+        }
+        return proc.pid as i64;
+    }
+
+    // 2) Enfant Ready -> switch coopératif vers lui (demandé à handle).
+    unsafe {
+        let cur_task = if USER_TASK_ID != 0 { USER_TASK_ID } else { task::CURRENT };
+        for i in 0..task::MAX_TASKS {
+            if TASK_STATE[i] == 1 && CTXS[i].is_some() {
+                let child_pid = CTXS[i].as_ref().unwrap().pid;
+                // L'enfant doit être un enfant du courant.
+                let is_child = PROCESSES.iter().any(|p| matches!(p, Some(pr) if pr.task_id == i && pr.ppid == current_pid));
+                if is_child && (pid == -1 || child_pid as i64 == pid) {
+                    PENDING_SWITCH = i;
+                    TASK_STATE[cur_task] = 2; // Waiting
+                    return 0; // placeholder ; child RAX=0 (fork) à la reprise
                 }
             }
-            // Nettoyer le processus.
-            unsafe {
-                PROCESSES[i] = None;
-            }
-            proc.task_id as i64
         }
-        None => -10, // -ECHILD
     }
+    -10 // -ECHILD
 }
 
 /// sys_pipe(fildes) — crée un pipe anonyme.
@@ -1201,7 +1284,7 @@ fn sys_kill(pid: u64, sig: u64) -> i64 {
         unsafe {
             for i in 0..PROCESSES.len() {
                 if let Some(proc) = PROCESSES[i] {
-                    if proc.task_id as u64 == pid && proc.state == ProcState::Running {
+                    if proc.pid == pid && proc.state == ProcState::Running {
                         PROCESSES[i] = Some(Process {
                             state: ProcState::Zombie,
                             exit_code: 0,
@@ -1269,10 +1352,53 @@ fn sys_memfd_create(name: u64, _flags: u64) -> i64 {
 /// de 0x1FF). RAX = 0 (valeur de retour inutilisée — sysret n'est
 /// pas utilisé, le contrôle passe directement vers pf_test).
 fn sys_exit(gpr_ptr: u64, code: u64) -> i64 {
+    let my_pid = unsafe { CURRENT_PID };
+    let my_task = unsafe { if USER_TASK_ID != 0 { USER_TASK_ID } else { task::CURRENT } };
     crate::console::print(format_args!(
         "\nJ3.3: processus ELF termine (exit code {})...\n",
         code
     ));
+
+    // J4-C coopératif : si je suis un enfant fork et que mon parent est
+    // suspendu (Waiting/Ready avec contexte), je deviens zombie et je
+    // rends la main au parent via PENDING_SWITCH. Le handle_syscall
+    // chargera son contexte ; son RAX (retour wait4) doit être mon pid :
+    // on le pose dans son SavedCtx avant le switch.
+    unsafe {
+        // Marquer mon état zombie + exit_code dans PROCESSES.
+        for i in 0..PROCESSES.len() {
+            if let Some(proc) = PROCESSES[i] {
+                if proc.task_id == my_task {
+                    PROCESSES[i] = Some(Process { state: ProcState::Zombie, exit_code: code as i64, ..proc });
+                    let parent_task = proc.parent_task;
+                    let parent_pid = proc.ppid;
+                    TASK_STATE[my_task] = 3;
+                    // Parent suspendu avec contexte ?
+                    if CTXS[parent_task].is_some() && TASK_STATE[parent_task] != 3 {
+                        // wstatus du parent (RSI sauvegardé à wait4) : code<<8.
+                        if let Some(pctx) = &mut CTXS[parent_task] {
+                            let wstatus = pctx.gprs[4]; // RSI offset 32 -> index 4
+                            if wstatus != 0 && user_buf_ok(wstatus, 4) {
+                                core::ptr::write_volatile(wstatus as *mut i32, (code as i32) << 8);
+                            }
+                            pctx.gprs[0] = my_pid; // RAX = pid enfant (retour wait4)
+                            pctx.pid = parent_pid;
+                        }
+                        PENDING_SWITCH = parent_task;
+                        // Le handle_syscall écrira RAX=0 (ret de sys_exit) dans
+                        // le bloc courant, puis chargera le parent dont le RAX
+                        // sauvegardé (my_pid) prend le dessus. On retourne
+                        // my_pid pour rester cohérent si un jour le chemin change.
+                        return my_pid as i64;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Sinon (processus initial sans parent, ou parent non suspendu) :
+    // comportement historique -> sortie vers pf_test en R0.
     unsafe {
         core::ptr::write_volatile(core::ptr::addr_of_mut!(EXIT_REQUESTED), 1u8);
         set_gpr(gpr_ptr, SYS_RCX, pf_test as *const () as u64);
@@ -1534,4 +1660,40 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
 
     // Écrire la valeur de retour dans le slot RAX.
     unsafe { set_gpr(gpr_ptr, SYS_RAX, ret as u64) };
+
+    // J4-C coopératif : appliquer un switch demandé (wait4 -> enfant,
+    // exit -> parent) ou un round-robin générique vers un Ready.
+    // On charge le contexte cible APRÈS l'écriture de RAX pour préserver
+    // le RAX sauvegardé de la cible ; le processus courant est sauvé
+    // avec son RAX de retour déjà posé.
+    unsafe {
+        let cur_task = if USER_TASK_ID != 0 { USER_TASK_ID } else { task::CURRENT };
+        let target: Option<usize> = if PENDING_SWITCH != usize::MAX {
+            let t = PENDING_SWITCH;
+            PENDING_SWITCH = usize::MAX;
+            Some(t)
+        } else if !matches!(nr, SYS_FORK | SYS_WAIT4 | SYS_EXIT | SYS_EXIT_GROUP | SYS_EXECVE | SYS_TEST_DONE) {
+            find_ready(cur_task)
+        } else {
+            None
+        };
+        if let Some(next) = target {
+            // Sauver le courant (sauf si exit : il devient zombie, cf. sys_exit
+            // qui a déjà marqué l'état ; on ne sauve pas un zombie).
+            let cur_is_zombie = TASK_STATE[cur_task] == 3;
+            if !cur_is_zombie {
+                save_ctx(cur_task, CURRENT_PID, gpr_ptr);
+                if nr == SYS_WAIT4 {
+                    TASK_STATE[cur_task] = 2; // Waiting
+                } else if TASK_STATE[cur_task] == 0 {
+                    TASK_STATE[cur_task] = 1; // Ready (round-robin)
+                }
+            }
+            if let Some(pid) = load_ctx(next, gpr_ptr) {
+                CURRENT_PID = pid;
+                USER_TASK_ID = next;
+                TASK_STATE[next] = 0; // Running
+            }
+        }
+    }
 }

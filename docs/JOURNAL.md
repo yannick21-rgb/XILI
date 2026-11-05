@@ -5,11 +5,11 @@ décisions prises.
 
 ---
 
-## 2026-11-05 — J4-C : fork — blocage architectural identifié (NON RÉSOLU)
+## 2026-11-06 — J4-C : fork — RÉSOLU (switch coopératif au syscall)
 
-> État : **J4 n'est pas terminé**. Les commits J4-C sont marqués `wip`.
-> `probe_fork` affiche `F1: parent` puis `F: ECHEC wait4` : l'enfant
-> n'est pas exécuté. Ne pas considérer J4 comme validé.
+> État : **J4-C résolu le 2026-11-06**. `probe_fork` affiche
+> `F2: enfant`, `F1: parent`, `F3: wait4 OK` ; `probe_fork2` affiche
+> `P1/P2/P3`. `make test` + J4-A + J4-B toujours OK.
 
 - **Diagnostic** : `sys_fork` crée la tâche enfant et le scheduler
   l'élit (vérifié par trace : `sched 1 -> 2`), mais l'enfant ne reprend
@@ -32,6 +32,17 @@ décisions prises.
 - **Reste** : refonte du modèle de processus — chaque userland doit
   avoir sa propre tâche ET un chemin de reprise R3 (passer par
   `entry_ring3` depuis un stub ring 0, pas par `iretq` du scheduler).
+- **Résolution (2026-11-06)** : abandon du préemptif par scheduler
+  (`is_user` exclu de l'élection timer, `create_task` borné à
+  `MAX_TASKS`). Switch **coopératif au retour de syscall** : le bloc
+  GPR de `syscall_entry` est copié par processus (`CTXS`), `wait4`
+  suspend le parent et charge l'enfant, `sys_exit` marque zombie et
+  recharge le parent (RAX = pid enfant, `wstatus` = code<<8). Round-robin
+  générique sur les autres syscalls pour `probe_fork2`. L'enfant reçoit
+  sa **propre pile userland** (copie 4 Kio, RSP ajusté) — sans elle,
+  parent/enfant s'écrasent l'adresse de retour. Limites : même espace
+  virtuel (pas de COW), 2 piles enfant (16 Kio BSS : 64 Kio faisaient
+  déborder le BSS et faultaient). Sonde : `probe_fork.elf` (`F3: wait4 OK`).
 
 ---
 

@@ -180,6 +180,19 @@ J1: noyau charge, mode long actif, console OK.
 - `/proc/self/maps` au format Linux réel.
 - Sonde : `make test-j4a PROBE=probe_j4b.elf PROBE_MARKER="probe_j4b: OK"`.
 
+**J4-C (2026-11-06) — fork coopératif** ✅
+- Switch au retour de syscall (pas par scheduler timer) : contexte GPR
+  copié par processus (`CTXS`), `wait4` suspend le parent et charge
+  l'enfant, `sys_exit` marque zombie et recharge le parent
+  (RAX = pid enfant, `wstatus` = code<<8). Round-robin générique sur les
+  autres syscalls. `is_user` exclu de l'élection timer, `create_task`
+  borné à `MAX_TASKS`, `wait4`/`kill` comparent le vrai `pid`.
+- L'enfant reçoit sa propre pile userland (copie 4 Kio du RSP parent,
+  RSP ajusté) — sinon parent/enfant partagent la pile et s'écrasent
+  l'adresse de retour. Même espace virtuel (pas de COW), 2 piles enfant.
+- Sondes : `make test-j4a PROBE=probe_fork.elf PROBE_MARKER="F3: wait4 OK"`,
+  `make test-j4a PROBE=probe_fork2.elf PROBE_MARKER="P2: enfant"`.
+
 **Test d'acceptation**
 - `apk update` puis `apk add bash vim python3` réussissent (réseau en J5,
   donc d'abord depuis un cache local).

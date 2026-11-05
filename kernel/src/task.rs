@@ -144,6 +144,9 @@ pub unsafe fn init_main() {
 /// retourner (boucle infinie ou panic).
 pub unsafe fn create_task(entry: extern "C" fn() -> !, priority: u8) -> usize {
     let id = NUM_TASKS;
+    if id >= MAX_TASKS {
+        return MAX_TASKS; // sentinel ENOMEM — ne pas dépasser TASKS
+    }
     NUM_TASKS += 1;
 
     let task = &mut TASKS[id];
@@ -259,6 +262,11 @@ pub unsafe fn schedule(current_rsp: u64) -> u64 {
 
     for i in 1..=num_tasks {
         let idx = (CURRENT + i) % num_tasks;
+        // J4-C coopératif : les tâches userland ne sont jamais élues par
+        // le scheduler timer (IF=0 en ring3, reprise via syscall coop).
+        if TASKS[idx].is_user {
+            continue;
+        }
         let eff = effective_priority(TASKS[idx].priority, TASKS[idx].age);
         if eff < best_eff {
             best_eff = eff;

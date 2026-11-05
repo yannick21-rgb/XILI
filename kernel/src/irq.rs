@@ -146,8 +146,10 @@ pub extern "C" fn handle_irq(gpr_ptr: u64) -> u64 {
     match f.vector {
         32 => handle_timer(),
         33 => handle_keyboard(),
+        // IRQ 3 (vecteur 35) : virtio-net. Le numéro exact dépend du
+        // slot PCI ; on délègue au driver qui vérifie s'il est prêt.
         _ => {
-            crate::serial::write_byte(b'?');
+            unsafe { crate::net::virtio_net::handle_irq() };
         }
     }
 

@@ -5,6 +5,31 @@ décisions prises.
 
 ---
 
+## 2026-11-06 — J5 : virtio-net — blocage sur l'accès aux registres
+
+> État : **J5 n'est pas terminé**. Le driver est réécrit (virtqueues
+> RX/TX, `send`/`recv`/`arp_probe`, handler IRQ) mais le device ne
+> répond pas : aucun BAR ne donne le magic virtio.
+
+- **Réécriture du driver** : `virtq_init` alloue une page pour
+  desc/avail/used, `rx_post` publie les descripteurs, `send` poste un
+  descripteur TX, `recv` consomme la ring used, `handle_irq` est branché
+  sur les IRQ non-timer, `arp_probe` émet un who-has et attend la réponse.
+- **Diagnostic** : le device est détecté (bus 0, slot 3, BAR0=0xc001
+  I/O, BAR1=0xfeb91000 MMIO, BAR4=0xfe00000c MMIO). Le command register
+  est activé (0x100103 → 0x100107). Mais aucun BAR ne donne le magic
+  `0x74726976` : BAR0 → bruit (0x79bf8064), BAR1 → 0, BAR4 → 0.
+- **Cause probable** : le device est en mode « moderne » (virtio 1.0),
+  où les registres legacy ne sont accessibles qu'après négociation de
+  features. Le mode legacy (PFN) n'est pas le bon chemin.
+- **Validation** : `make test` OK (délai pipe porté à 12 s — le PCI
+  scan du driver a ralenti le boot). `make test-net` en échec.
+- **Reste** : implémenter la négociation de features virtio 1.0
+  (device_features → driver_features → FEATURES_OK), puis utiliser les
+  registres modernes (queue_notify, queue_desc, etc.).
+
+---
+
 ## 2026-11-06 — J4-C : fork — RÉSOLU (switch coopératif au syscall)
 
 > État : **J4-C résolu le 2026-11-06**. `probe_fork` affiche

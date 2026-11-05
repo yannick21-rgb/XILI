@@ -390,6 +390,14 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     let _net_ok = unsafe { crate::net::virtio_net::init() };
     if _net_ok {
         console::print(format_args!("J5.1: virtio-net OK\n"));
+        unsafe { crate::net::virtio_net::rx_init_buffers() };
+        // Sonde ARP : who-has 10.0.2.2 (passerelle QEMU user networking).
+        let ok = unsafe { crate::net::virtio_net::arp_probe([10, 0, 2, 2], 200) };
+        if ok {
+            console::print(format_args!("J5.2: ARP reply recu\n"));
+        } else {
+            console::print(format_args!("J5.2: ARP pas de reponse\n"));
+        }
     } else {
         console::print(format_args!("J5.1: virtio-net absent (QEMU sans -net ?)\n"));
     }

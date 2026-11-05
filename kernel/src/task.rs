@@ -93,6 +93,9 @@ pub struct Task {
     pub priority: u8,
     /// Nombre de ticks depuis la dernière exécution (pour l'âge).
     pub age: u64,
+    /// Tâche userland : `saved_rsp` pointe sur un frame iretq, pas sur
+    /// un bloc GPR. Le scheduler doit passer par `resume_ring3`.
+    pub is_user: bool,
 }
 
 /// Tableau des tâches. L'entrée 0 est toujours le noyau principal.
@@ -102,6 +105,7 @@ pub static mut TASKS: [Task; MAX_TASKS] = [
         saved_rsp: 0,
         priority: KERNEL_PRIORITY,
         age: 0,
+        is_user: false,
     };
     MAX_TASKS
 ];
@@ -169,6 +173,7 @@ pub unsafe fn create_task(entry: extern "C" fn() -> !, priority: u8) -> usize {
     task.saved_rsp = rsp;
     task.priority = priority;
     task.age = 0;
+    task.is_user = false;
     id
 }
 
@@ -193,26 +198,12 @@ fn effective_priority(priority: u8, age: u64) -> i64 {
 pub unsafe fn yield_to(task_id: usize) {
     let rsp = TASKS[task_id].saved_rsp;
 
-    // Charger RSP sur le bloc GPR de la tâche cible, dépiler les GPR,
-    // puis iretq — exactement le chemin de reprise d'un context switch.
+    // Charger RSP sur le frame iretq de la tâche cible, puis sauter au
+    // stub de reprise — exactement le chemin de reprise d'un context
+    // switch, mais sans passer par irq_common (qui retire 2 mots).
     core::arch::asm!(
         "mov rsp, {0}",
-        "pop rax",
-        "pop rbx",
-        "pop rcx",
-        "pop rdx",
-        "pop rsi",
-        "pop rdi",
-        "pop rbp",
-        "pop r8",
-        "pop r9",
-        "pop r10",
-        "pop r11",
-        "pop r12",
-        "pop r13",
-        "pop r14",
-        "pop r15",
-        "iretq",
+        "jmp resume_ring3",
         in(reg) rsp,
         options(noreturn)
     );
@@ -275,6 +266,27 @@ pub unsafe fn schedule(current_rsp: u64) -> u64 {
         }
     }
 
+    // J4-C : si la tache elue est un userland (saved_rsp pointe sur un
+    // frame iretq, pas sur un bloc GPR), on passe par resume_ring3.
+    // Le scheduler ne peut pas utiliser iretq directement : irq_common
+    // retire les 2 premiers mots du frame (vector + error_code), ce qui
+    // ne convient pas au format userland.
+    let next_rsp = TASKS[best].saved_rsp;
+    let is_user = TASKS[best].is_user;
+
     CURRENT = best;
-    TASKS[CURRENT].saved_rsp
+
+    if is_user {
+        // Sauter au stub de reprise avec RSP sur le frame userland.
+        unsafe {
+            core::arch::asm!(
+                "mov rsp, {0}",
+                "jmp resume_ring3",
+                in(reg) next_rsp,
+                options(noreturn)
+            );
+        }
+    }
+
+    next_rsp
 }

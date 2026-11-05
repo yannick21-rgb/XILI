@@ -14,14 +14,16 @@ décisions prises.
   dans le bloc GPR de `syscall_entry`, recréé à chaque appel.
 - **Ce qui a été tenté** : enregistrement du processus comme tâche
   (`USER_TASK_ID`, `save_user_context`, `register_user_task`,
-  `user_task_entry`, `yield_to`). Résultat : l'enfant est élu mais
-  `iretq` depuis le scheduler ne peut pas revenir en ring 3 — QEMU TCG
-  charge CS depuis STAR[47:32] (KERNEL_DS) au lieu de STAR[63:48]
-  (KERNEL_CS), donc #GP. `entry_ring3` reste le seul chemin R0→R3.
+  `user_task_entry`, `resume_ring3`, `yield_to`). Résultat : l'enfant
+  est élu mais `iretq` depuis le scheduler ne peut pas revenir en ring 3
+  — QEMU TCG charge CS depuis STAR[47:32] (KERNEL_DS) au lieu de
+  STAR[63:48] (KERNEL_CS), donc #GP. `entry_ring3` reste le seul chemin
+  R0→R3.
 - **Correctifs livrés** : `sys_fork` retourne le PID (pas le PID du
-  parent), copie la pile de `USER_TASK_ID` (pas la tâche 0), `wait4`
-  écrit `wstatus` et gère `pid=-1`, `fork_child_entry` fait `iretq`
-  au lieu de `hlt`.
+  parent), copie le frame iretq de `USER_TASK_ID` (pas la tâche 0),
+  `wait4` écrit `wstatus` et gère `pid=-1`, `fork_child_entry` et
+  `user_task_entry` sautent à `resume_ring3`, `resume_ring3` lit RAX
+  dans le bloc GPR sous le frame.
 - **Validation** : `make test` + `make test-uefi` + J4-A + J4-B OK.
   `probe_fork` montre `F1: parent` puis `F: ECHEC wait4` — l'enfant
   n'est pas exécuté.

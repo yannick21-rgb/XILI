@@ -324,6 +324,41 @@ entry_ring3:
     iretq
 
 /* ============================================================
+ * resume_ring3 — stub de reprise d'une tache userland (J4-C)
+ *
+ * Le scheduler saute ici (jmp) pour demarrer ou reprendre une tache
+ * userland. RSP pointe sur un frame iretq prepare par
+ * `register_user_task` / `save_user_context` :
+ *
+ *   [rsp]     = user RIP
+ *   [rsp+8]   = 0x2B (USER_CS | RPL3)
+ *   [rsp+16]  = 0x202 (RFLAGS, IF)
+ *   [rsp+24]  = user RSP
+ *   [rsp+32]  = 0x33 (USER_DS | RPL3)
+ *
+ * Contrairement a irq_common, il n'y a PAS de `add $16, %rsp` : le
+ * frame est deja au bon format pour iretq. C'est ce chemin qui permet
+ * de reprendre un userland depuis le scheduler (irq_common ne le peut
+ * pas : il retirerait les 2 premiers mots du frame).
+ * ============================================================ */
+
+.global resume_ring3
+resume_ring3:
+    # Les segments data doivent etre valides en R3.
+    movq $0x30, %rax
+    movq %rax, %ds
+    movq %rax, %es
+    movq %rax, %fs
+    movq %rax, %gs
+
+    # RAX = valeur de retour fork (0 pour l'enfant, PID pour le parent).
+    # Elle est stockée dans le bloc GPR juste sous le frame iretq.
+    movq -120(%rsp), %rax
+
+    # RSP pointe sur le frame prepare : iretq tel quel.
+    iretq
+
+/* ============================================================
  * ring3_test_func — code utilisateur de test (J3.2)
  *
  * S'exécute en anneau 3. Appelle `syscall` pour écrire 'S'

@@ -95,7 +95,7 @@ run-esp: esp
 #
 # J3.4 : VFS + /dev sont initialises avant le chargement de desk.elf.
 # J3.5/J4.2 : desk.elf est charge depuis l'initrd ; le bureau userland
-# ecrit son marker puis se termine.
+# ecrit son cadre de fenetre puis se termine.
 test: iso
 	@printf 'hello.elf\n' > /tmp/xili-shell-in.txt
 	@timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot < /tmp/xili-shell-in.txt > $(LOG) 2>&1 || true

@@ -462,6 +462,17 @@ fn run_initrd_elf(name: &str, user_stack_top: u64) -> ! {
     ));
     console::print(format_args!("  execution en R3 via iretq...\n"));
 
+    // J4-C : enregistrer le processus comme tâche du scheduler, puis
+    // passer en ring 3 via entry_ring3. Le contexte du processus est
+    // sauvegardé dans sa tâche à chaque syscall (handle_syscall).
+    unsafe {
+        let task_id = crate::task::create_task(crate::syscall::user_task_entry, 1);
+        if task_id < crate::task::MAX_TASKS {
+            crate::syscall::register_user_task(task_id, entry, stack_top);
+            crate::syscall::USER_TASK_ID = task_id;
+        }
+    }
+
     unsafe { entry_ring3(entry, stack_top) };
 }
 

@@ -68,7 +68,7 @@ pub const GPR_SAVE_SIZE: usize = NGPRS * 8;
 const FRAME_SIZE: usize = 5 * 8; // 40
 
 /// Taille totale du bloc sauvé : GPRs + interrupt frame.
-const TASK_FRAME_SIZE: usize = GPR_SAVE_SIZE + FRAME_SIZE; // 160
+pub const TASK_FRAME_SIZE: usize = GPR_SAVE_SIZE + FRAME_SIZE; // 160
 
 /// La pile de chaque tâche : 32 Kio, alignée à 16 octets.
 pub const TASK_STACK_SIZE: usize = 32_384;
@@ -183,6 +183,39 @@ pub unsafe fn create_task(entry: extern "C" fn() -> !, priority: u8) -> usize {
 #[inline]
 fn effective_priority(priority: u8, age: u64) -> i64 {
     priority as i64 - age as i64
+}
+
+/// Rend la main au scheduler en élisant immédiatement la tâche `task_id`.
+///
+/// Utilisé au démarrage pour passer la main à la première tâche userland.
+/// Construit un frame d'interruption factice et saute dessus, comme le
+/// ferait `irq_common` après un tick.
+pub unsafe fn yield_to(task_id: usize) {
+    let rsp = TASKS[task_id].saved_rsp;
+
+    // Charger RSP sur le bloc GPR de la tâche cible, dépiler les GPR,
+    // puis iretq — exactement le chemin de reprise d'un context switch.
+    core::arch::asm!(
+        "mov rsp, {0}",
+        "pop rax",
+        "pop rbx",
+        "pop rcx",
+        "pop rdx",
+        "pop rsi",
+        "pop rdi",
+        "pop rbp",
+        "pop r8",
+        "pop r9",
+        "pop r10",
+        "pop r11",
+        "pop r12",
+        "pop r13",
+        "pop r14",
+        "pop r15",
+        "iretq",
+        in(reg) rsp,
+        options(noreturn)
+    );
 }
 
 /// Planifie la prochaine tâche — priorité avec aging (anti-starvation).

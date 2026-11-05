@@ -162,14 +162,23 @@ static mut CURRENT_TASK_ID: usize = 0;
 static mut CURRENT_PID: u64 = 1;
 static mut CURRENT_CWD: [u8; 64] = [0; 64];
 
+/// Tâche du processus userland courant (0 = noyau principal).
+///
+/// Mis à jour par `run_initrd_elf` à l'enregistrement du processus, et
+/// par `sys_fork` pour l'enfant. Sert à sauvegarder le contexte avant
+/// un `fork`.
+pub static mut USER_TASK_ID: usize = 0;
+
 /* ------------------------------------------------------------ *
  * fork / execve / wait4 / pipe / mmap (J4)
  * ------------------------------------------------------------ */
 
-/// sys_fork() — crée un processus enfant.
+/// sys_fork() — crée un processus enfant (copie du contexte courant).
 ///
-/// Copie le contexte de la tâche courante et retourne le PID enfant
-/// au parent, 0 à l'enfant.
+/// L'enfant reprend exactement où le parent était : même bloc GPR, même
+/// pile noyau, même interrupt frame. Seul RAX diffère (0 chez l'enfant,
+/// PID chez le parent). L'enfant est inséré dans le scheduler et
+/// reprendra sur sa propre pile lors du prochain tick.
 fn sys_fork(gpr_ptr: u64) -> i64 {
     // 1. Créer une nouvelle tâche dans le scheduler.
     let child_task_id = unsafe { task::create_task(fork_child_entry, 2) };
@@ -195,12 +204,20 @@ fn sys_fork(gpr_ptr: u64) -> i64 {
 
     // 4. Copier le contexte de la tâche courante dans l'enfant.
     //    La pile de l'enfant est séparée, donc on copie le bloc GPR
-    //    et le contenu de la pile noyau.
+    //    et le contenu de la pile noyau, puis on ajuste saved_rsp.
     unsafe {
-        let current_task = &task::TASKS[CURRENT_TASK_ID];
+        // La tâche courante est celle du processus userland (enregistrée
+        // par handle_syscall), pas l'index 0 du noyau principal.
+        let current_task_id = if USER_TASK_ID != 0 {
+            USER_TASK_ID
+        } else {
+            task::CURRENT
+        };
+        let current_task = &task::TASKS[current_task_id];
         let child_task = &mut task::TASKS[child_task_id];
 
-        // Copier la pile (32 Kio).
+        // Copier toute la pile (32 Kio) : le bloc GPR, l'interrupt
+        // frame et le reste du contexte noyau sont reproduits à l'identique.
         core::ptr::copy_nonoverlapping(
             current_task.stack.as_ptr(),
             child_task.stack.as_mut_ptr(),
@@ -222,32 +239,173 @@ fn sys_fork(gpr_ptr: u64) -> i64 {
 
         // Dans le parent, RAX = pid de l'enfant.
         set_gpr(gpr_ptr, SYS_RAX, pid as u64);
+
+        // L'enfant est prêt : il sera élu au prochain tick du timer.
+        child_task.priority = 2;
+        child_task.age = 0;
     }
 
     // 5. Retourner le PID enfant au parent.
-    (unsafe { CURRENT_PID }) as i64
+    pid as i64
+}
+
+/// Point d'entrée de la tâche userland : démare le programme en ring 3.
+///
+/// La pile de la tâche a été initialisée par `register_user_task` avec
+/// un frame d'interruption (rip = entry, cs = USER_CS, rflags = IF).
+/// On dépile les GPR (à zéro) puis `iretq` pour passer en ring 3.
+pub extern "C" fn user_task_entry() -> ! {
+    unsafe {
+        let task_id = task::CURRENT;
+        let rsp = task::TASKS[task_id].saved_rsp;
+
+        core::arch::asm!(
+            "mov rsp, {0}",
+            "pop rax",
+            "pop rbx",
+            "pop rcx",
+            "pop rdx",
+            "pop rsi",
+            "pop rdi",
+            "pop rbp",
+            "pop r8",
+            "pop r9",
+            "pop r10",
+            "pop r11",
+            "pop r12",
+            "pop r13",
+            "pop r14",
+            "pop r15",
+            "iretq",
+            in(reg) rsp,
+            options(noreturn)
+        );
+    }
 }
 
 /// Point d'entrée de la tâche enfant après fork.
-/// Restaure les GPRs et retourne en utilisateur avec RAX=0.
-extern "C" fn fork_child_entry() -> ! {
-    // Le contexte a été copié par sys_fork ; il suffit de retourner
-    // en utilisateur via iretq (sauvegardé dans la pile enfant).
+///
+/// Le contexte a été copié par sys_fork : le bloc GPR en haut de la
+/// pile de l'enfant contient les registres du parent au moment de
+/// l'appel, et l'interrupt frame juste au-dessus permet à `iretq` de
+/// revenir en ring 3 exactement où le parent était.
+pub extern "C" fn fork_child_entry() -> ! {
     unsafe {
         let child_task_id = task::CURRENT;
-        let task = &task::TASKS[child_task_id];
-        let rsp = task.saved_rsp;
-        // Restaurer les GPRs et iretq.
+        let rsp = task::TASKS[child_task_id].saved_rsp;
+
+        // Recharger RSP sur le bloc GPR copié, puis dépiler les GPR et
+        // exécuter iretq — le frame a été copié tel quel par sys_fork.
         core::arch::asm!(
             "mov rsp, {0}",
+            "pop rax",
+            "pop rbx",
+            "pop rcx",
+            "pop rdx",
+            "pop rsi",
+            "pop rdi",
+            "pop rbp",
+            "pop r8",
+            "pop r9",
+            "pop r10",
+            "pop r11",
+            "pop r12",
+            "pop r13",
+            "pop r14",
+            "pop r15",
+            "iretq",
             in(reg) rsp,
-            options(nostack)
+            options(noreturn)
         );
-        // irq_common a déjà poussé les GPRs ; on pop et iretq.
-        loop {
-            core::arch::asm!("hlt");
-        }
     }
+}
+
+/* ------------------------------------------------------------
+ * Enregistrement du processus courant dans le scheduler (J4-C)
+ *
+ * Les processus userland tournent sur la pile du boot, pas dans une
+ * tâche du scheduler. Pour que `fork` puisse copier un contexte, il
+ * faut que le processus courant ait sa propre pile de tâche et son
+ * propre frame d'interruption.
+ * ------------------------------------------------------------ */
+
+/// Enregistre le contexte du processus courant dans sa tâche.
+///
+/// Appelé depuis `handle_syscall` au moment où un `syscall` entre en
+/// ring 0 : le bloc GPR du processus est alors disponible dans
+/// `gpr_ptr`, et l'interrupt frame (qui contient le RIP et le RSP
+/// utilisateur) se trouve juste au-dessus. On copie le tout dans la
+/// pile de la tâche, afin que `fork` puisse cloner un contexte complet.
+///
+/// `task_id` doit être l'identifiant de la tâche du processus courant.
+pub unsafe fn save_user_context(task_id: usize, gpr_ptr: u64) {
+    if task_id >= task::MAX_TASKS {
+        return;
+    }
+
+    // Le frame d'interruption est à gpr_ptr + GPR_SAVE_SIZE.
+    // Pour syscall_entry, le frame est [vector][error_code][rip][cs][rflags]
+    // mais syscall_entry ne pousse pas de frame : il empile les GPR puis
+    // appelle handle_syscall. Le RIP utilisateur est dans RCX (offset 16).
+    let task = &mut task::TASKS[task_id];
+    let stack_top = task.stack.as_ptr() as u64 + task::TASK_STACK_SIZE as u64;
+    let rsp = stack_top - task::TASK_FRAME_SIZE as u64;
+
+    // Copier le bloc GPR (120 octets).
+    core::ptr::copy_nonoverlapping(
+        gpr_ptr as *const u8,
+        rsp as *mut u8,
+        task::GPR_SAVE_SIZE,
+    );
+
+    // Construire un frame d'interruption factice : reprise en ring 3
+    // à l'adresse contenue dans RCX (le RIP utilisateur sauvé par
+    // `syscall`), avec le RSP utilisateur de R15.
+    let user_rip = core::ptr::read_volatile((gpr_ptr + 16) as *const u64);
+    let user_rsp = core::ptr::read_volatile((gpr_ptr + 112) as *const u64);
+
+    let frame_base = (rsp + task::GPR_SAVE_SIZE as u64) as *mut u64;
+    core::ptr::write_volatile(frame_base.add(0), 32);          // vector
+    core::ptr::write_volatile(frame_base.add(1), 0);           // error_code
+    core::ptr::write_volatile(frame_base.add(2), user_rip);    // rip
+    core::ptr::write_volatile(frame_base.add(3), 0x2B);        // cs = USER_CS|RPL3
+    core::ptr::write_volatile(frame_base.add(4), 0x202);       // rflags = IF
+
+    // Le RSP utilisateur est dans le bloc GPR (R15, offset 112) : il
+    // sera restauré par le pop des GPR avant iretq.
+    let _ = user_rsp;
+
+    task.saved_rsp = rsp;
+}
+
+/// Enregistre le processus userland courant comme tâche du scheduler.
+///
+/// Construit un frame d'interruption factice (rip = adresse de reprise,
+/// cs = USER_CS, rflags = IF) sur la pile de la tâche, puis la rend
+/// courante. Le `syscall` qui a déclenché l'enregistrement reprendra
+/// sur ce frame.
+pub unsafe fn register_user_task(task_id: usize, user_rip: u64, user_rsp: u64) {
+    let task = &mut task::TASKS[task_id];
+    let stack_top = task.stack.as_ptr() as u64 + task::TASK_STACK_SIZE as u64;
+    let rsp = stack_top - task::TASK_FRAME_SIZE as u64;
+
+    // Bloc GPR à zéro (le frame porte le contexte de reprise).
+    let gpr_base = rsp as *mut u64;
+    for i in 0..task::NGPRS {
+        core::ptr::write_volatile(gpr_base.add(i), 0u64);
+    }
+
+    // Frame d'interruption : reprise en ring 3.
+    let frame_base = (rsp + task::GPR_SAVE_SIZE as u64) as *mut u64;
+    core::ptr::write_volatile(frame_base.add(0), 32);          // vector
+    core::ptr::write_volatile(frame_base.add(1), 0);           // error_code
+    core::ptr::write_volatile(frame_base.add(2), user_rip);    // rip
+    core::ptr::write_volatile(frame_base.add(3), 0x2B);        // cs = USER_CS|RPL3
+    core::ptr::write_volatile(frame_base.add(4), 0x202);       // rflags = IF
+
+    task.saved_rsp = rsp;
+    task.priority = 1;
+    task.age = 0;
 }
 
 /// Charge un ELF depuis l'initrd et retourne (entry, stack_top).
@@ -307,29 +465,44 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
 }
 
 /// sys_wait4(pid, wstatus, options) — attend la fin d'un enfant.
-fn sys_wait4(_pid: i64, _wstatus: u64, _options: u64) -> i64 {
+///
+/// `pid = -1` : n'importe quel enfant. `pid > 0` : un enfant précis.
+/// `wstatus` peut être NULL. Retourne le PID de l'enfant terminé, ou
+/// -errno (-ECHILD si aucun enfant zombie).
+fn sys_wait4(pid: i64, wstatus: u64, _options: u64) -> i64 {
     let current_pid = unsafe { CURRENT_PID };
 
-    // Chercher un enfant zombie.
-    let mut found = None;
-    unsafe {
+    // Sélectionner l'enfant à attendre.
+    let target: Option<usize> = unsafe {
+        let mut found = None;
         for i in 0..PROCESSES.len() {
             if let Some(proc) = PROCESSES[i] {
                 if proc.ppid == current_pid && proc.state == ProcState::Zombie {
-                    found = Some(proc);
-                    break;
+                    if pid == -1 || proc.task_id as i64 == pid {
+                        found = Some(i);
+                        break;
+                    }
                 }
             }
         }
-    }
+        found
+    };
 
-    match found {
-        Some(proc) => {
+    match target {
+        Some(i) => {
+            let proc = unsafe { PROCESSES[i] }.unwrap();
+            // Écrire le statut de sortie si le buffer est fourni.
+            if wstatus != 0 && user_buf_ok(wstatus, 4) {
+                unsafe {
+                    let code = (proc.exit_code as i32) << 8;
+                    core::ptr::write_volatile(wstatus as *mut i32, code);
+                }
+            }
             // Nettoyer le processus.
             unsafe {
-                PROCESSES[proc.task_id as usize] = None;
+                PROCESSES[i] = None;
             }
-            proc.exit_code
+            proc.task_id as i64
         }
         None => -10, // -ECHILD
     }
@@ -1345,6 +1518,16 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
     // W6 : l'offset de mmap est le 6e argument (registre R9 pour la
     // convention syscall), pas le 5e (R8).
     let arg6 = unsafe { gpr(gpr_ptr, SYS_R9) };
+
+    // J4-C : sauvegarder le contexte du processus dans sa tâche, pour
+    // que `fork` puisse le cloner. Seulement si un processus userland
+    // est enregistré (USER_TASK_ID != 0).
+    unsafe {
+        let user_task = USER_TASK_ID;
+        if user_task != 0 {
+            save_user_context(user_task, gpr_ptr);
+        }
+    }
 
     let ret: i64 = match nr {
         SYS_READ => sys_read(arg1, arg2, arg3),

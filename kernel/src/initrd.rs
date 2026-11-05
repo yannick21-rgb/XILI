@@ -64,10 +64,10 @@ pub fn init(archive: &'static [u8]) {
             let filesize = parse_hex8(archive, off + 54) as usize;
             let namesize = parse_hex8(archive, off + 94) as usize;
 
-            let mut name_off = off + 110;
-            if name_off < archive.len() && archive[name_off] == 0 {
-                name_off = (name_off + 3) & !3;
-            }
+            // Le nom commence immediatement apres l'en-tete de 110 octets :
+            // cpio newc ne prevoit PAS d'alignement ici. C'est la DONNEE qui
+            // est alignee sur 4, par rapport a l'adresse absolue.
+            let name_off = off + 110;
             off = name_off;
 
             if off + namesize > archive.len() {
@@ -75,10 +75,8 @@ pub fn init(archive: &'static [u8]) {
             }
             let name = &archive[off..off + namesize];
 
-            // Le data commence juste après le nom NUL-terminé, **aligné sur un
-            // multiple de 4 octets** (champ nom = header 110 + nom + padding).
-            // Ne PAS faire `off += round4(namesize)` : l'alignement est relatif
-            // à l'adresse absolue, pas à la taille du champ.
+            // La data commence juste apres le nom, alignee sur 4 par rapport
+            // a l'adresse absolue de l'archive.
             let data_off = (off + namesize + 3) & !3;
             off = data_off;
 

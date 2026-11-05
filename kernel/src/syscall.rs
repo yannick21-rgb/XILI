@@ -98,6 +98,11 @@ const SYS_GETCWD: u64 = 79;
 const SYS_CHDIR: u64 = 80;
 const SYS_DUP: u64 = 32;
 const SYS_DUP2: u64 = 33;
+const SYS_LSEEK: u64 = 8;
+const SYS_MPROTECT: u64 = 10;
+const SYS_MUNMAP: u64 = 11;
+const SYS_UNAME: u64 = 63;
+const SYS_GETDENTS64: u64 = 217;
 
 /// Descripteurs fichiers — 3 emplacements réservés (stdin/stdout/stderr),
 /// fd 3+ réservés aux fichiers du VFS. La table vive est celle du VFS
@@ -322,27 +327,109 @@ fn sys_pipe(fildes: u64) -> i64 {
     }
 }
 
-/// sys_mmap(addr, length, prot, flags, fd, offset) — projette un fichier
-/// en mémoire. Version simplifiée : alloue des pages physiques et les
-/// mappe à l'adresse virtuelle demandée.
-fn sys_mmap(addr: u64, length: u64, _prot: u64, _flags: u64, _fd: i64, _offset: u64) -> i64 {
+/// sys_mmap(addr, length, prot, flags, fd, offset) — projette de la mémoire.
+///
+/// J4-A : gère `MAP_ANONYMOUS` (fd=-1) et `MAP_PRIVATE`. Si `addr` est 0,
+/// choisit une adresse libre dans l'espace utilisateur (à partir de
+/// `MMAP_BASE`). Sinon mappe à l'adresse demandée (sans garantie
+/// `MAP_FIXED` : on vérifie que la page est libre).
+///
+/// Protéctions : `PROT_READ`/`PROT_WRITE`/`PROT_EXEC` → drapeaux de page.
+fn sys_mmap(addr: u64, length: u64, prot: u64, flags: u64, fd: i64, offset: u64) -> i64 {
     if length == 0 {
         return -22; // -EINVAL
     }
 
+    // MAP_ANONYMOUS = 0x20 ; MAP_PRIVATE = 0x02.
+    const MAP_PRIVATE: u64 = 0x02;
+    const MAP_ANONYMOUS: u64 = 0x20;
+    const MAP_FIXED: u64 = 0x10;
+
+    let _ = MAP_PRIVATE; // accepté, pas de COW à ce stade
+
+    // Adresse de base de l'espace mmap utilisateur (au-dessus du tas).
+    const MMAP_BASE: u64 = 0x0000_2000_0000_0000;
+
     let num_pages = ((length + 0xFFF) & !0xFFF) / 0x1000;
+
+    // Choisir l'adresse de départ.
+    let base = if addr != 0 {
+        // MAP_FIXED : l'appelant exige cette adresse.
+        if flags & MAP_FIXED == 0 {
+            // Sans MAP_FIXED, on mappe à l'adresse demandée seulement si
+            // elle est libre ; sinon on choisit une adresse au-dessus.
+            let mut free = true;
+            for i in 0..num_pages {
+                if unsafe { crate::mm::paging::translate(addr + i * 0x1000) }.is_some() {
+                    free = false;
+                    break;
+                }
+            }
+            if free { addr } else { MMAP_BASE }
+        } else {
+            addr
+        }
+    } else {
+        MMAP_BASE
+    };
+
+    // Allouer et mapper chaque page.
+    let mut flags_page = crate::mm::paging::PRESENT;
+    if prot & 0x2 != 0 {
+        flags_page |= crate::mm::paging::WRITABLE;
+    }
+    if prot & 0x1 == 0 {
+        flags_page |= crate::mm::paging::NOEXEC;
+    }
+    // L'espace utilisateur doit être accessible en ring 3.
+    flags_page |= crate::mm::paging::USER;
+
+    let mut paddrs: [u64; 64] = [0; 64];
+    if num_pages > paddrs.len() as u64 {
+        return -12; // -ENOMEM : zone trop grande pour ce stade
+    }
+
     for i in 0..num_pages {
         let paddr = match crate::mm::phys::alloc_page() {
             Some(p) => p as u64,
-            None => return -12, // -ENOMEM
+            None => {
+                // Libérer les pages déjà allouées.
+                for j in 0..i {
+                    unsafe { crate::mm::phys::free_page(paddrs[j as usize] as usize) };
+                }
+                return -12; // -ENOMEM
+            }
         };
-        let vaddr = addr + i * 0x1000;
+        paddrs[i as usize] = paddr;
+    }
+
+    for i in 0..num_pages {
+        let vaddr = base + i * 0x1000;
         unsafe {
-            crate::mm::paging::map_page(vaddr, paddr, crate::mm::paging::PRESENT | crate::mm::paging::WRITABLE);
+            crate::mm::paging::map_page(vaddr, paddrs[i as usize], flags_page);
         }
     }
 
-    addr as i64
+    // Si une fd est fournie (sans MAP_ANONYMOUS), copier le contenu du
+    // fichier à l'offset demandé. À ce stade, seuls les fichiers initrd
+    // sont lisibles : on copie depuis l'inode.
+    if fd >= 0 && flags & MAP_ANONYMOUS == 0 {
+        if let Some((data, size)) = unsafe { crate::vfs::read_fd_all(fd as usize) } {
+            let src_off = offset as usize;
+            if src_off < size {
+                let n = core::cmp::min(size - src_off, (num_pages * 0x1000) as usize);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        data.add(src_off),
+                        base as *mut u8,
+                        n,
+                    );
+                }
+            }
+        }
+    }
+
+    base as i64
 }
 
 /* ------------------------------------------------------------ *
@@ -520,11 +607,18 @@ const SYS_R11: usize = 80;  // user RFLAGS (saved by syscall)
 /// considéré comme invalide (-EFAULT) — CR-3.
 const USER_BUF_LIMIT: u64 = 0x1_0000_0000;
 
+/// Limite haute de l'espace utilisateur (au-delà : noyau).
+///
+/// L'espace utilisateur s'étend de 0 à `USER_SPACE_TOP` ; au-delà, les
+/// adresses appartiennent au noyau (higher-half). Les buffers
+/// utilisateurs doivent rester sous cette limite.
+const USER_SPACE_TOP: u64 = 0x0000_8000_0000_0000;
+
 /// Vérifie qu'un buffer `[addr, addr + len)` est entièrement dans
 /// l'espace utilisateur. Renvoie false si le pointeur est invalide ou
 /// si l'addition overflow (checked_add).
 fn user_buf_ok(addr: u64, len: u64) -> bool {
-    addr.checked_add(len).map_or(false, |end| end <= USER_BUF_LIMIT)
+    addr.checked_add(len).map_or(false, |end| end <= USER_SPACE_TOP)
 }
 
 /// sys_write(fd, buf, count) — écrit sur le port série pour fd=1.
@@ -594,6 +688,118 @@ fn sys_brk(addr: u64) -> i64 {
         0x6000_0000  // adresse de base du tas utilisateur (user-space, pas noyau)
     } else {
         addr as i64
+    }
+}
+
+/// sys_lseek(fd, offset, whence) — repositionne le curseur d'un fd.
+fn sys_lseek(fd: u64, offset: i64, whence: u32) -> i64 {
+    if fd as usize >= MAX_FD {
+        return -9; // -EBADF
+    }
+    match unsafe { crate::vfs::lseek(fd as usize, offset, whence) } {
+        Ok(pos) => pos,
+        Err(e) => e,
+    }
+}
+
+/// sys_mprotect(addr, len, prot) — change les protections d'une zone.
+///
+/// Version J4-A : applique les drapeaux `PRESENT`/`WRITABLE`/`NOEXEC`
+/// sur les pages de la zone. `PROT_READ` seul retire `WRITABLE`.
+fn sys_mprotect(addr: u64, len: u64, prot: u64) -> i64 {
+    if addr == 0 || len == 0 {
+        return -22; // -EINVAL
+    }
+    if addr % 0x1000 != 0 {
+        return -22; // -EINVAL : addr doit être aligné page
+    }
+    if !user_buf_ok(addr, len) {
+        return -14; // -EFAULT
+    }
+
+    let num_pages = ((len + 0xFFF) & !0xFFF) / 0x1000;
+    let mut flags = crate::mm::paging::PRESENT;
+    if prot & 0x2 != 0 {
+        flags |= crate::mm::paging::WRITABLE;
+    }
+    if prot & 0x1 == 0 {
+        flags |= crate::mm::paging::NOEXEC;
+    }
+
+    for i in 0..num_pages {
+        let vaddr = addr + i * 0x1000;
+        // On ne peut pas changer les drapeaux d'une page sans connaître
+        // son adresse physique : on lit l'entrée existante.
+        let paddr = match unsafe { crate::mm::paging::translate(vaddr) } {
+            Some(p) => p,
+            None => return -12, // -ENOMEM : page absente
+        };
+        unsafe { crate::mm::paging::map_page(vaddr, paddr, flags) };
+    }
+    0
+}
+
+/// sys_munmap(addr, len) — libère une zone mappée.
+fn sys_munmap(addr: u64, len: u64) -> i64 {
+    if addr == 0 || len == 0 || addr % 0x1000 != 0 {
+        return -22; // -EINVAL
+    }
+    if !user_buf_ok(addr, len) {
+        return -14; // -EFAULT
+    }
+
+    let num_pages = ((len + 0xFFF) & !0xFFF) / 0x1000;
+    for i in 0..num_pages {
+        let vaddr = addr + i * 0x1000;
+        if let Some(paddr) = unsafe { crate::mm::paging::translate(vaddr) } {
+            unsafe {
+                crate::mm::paging::unmap_page(vaddr);
+                crate::mm::phys::free_page(paddr as usize);
+            }
+        }
+    }
+    0
+}
+
+/// sys_uname(buf) — remplit une structure `struct utsname` (6 × 65 octets).
+///
+/// Layout Linux x86-64 : sysname, nodename, release, version, machine,
+/// domainname — chacun 65 octets, NUL-terminés.
+fn sys_uname(buf: u64) -> i64 {
+    if !user_buf_ok(buf, 390) {
+        return -14; // -EFAULT
+    }
+
+    let fields: [&[u8]; 6] = [
+        b"XILI",          // sysname
+        b"xili",          // nodename
+        b"0.1.0",         // release
+        b"#1",            // version
+        b"x86_64",        // machine
+        b"(none)",        // domainname
+    ];
+
+    unsafe {
+        core::ptr::write_bytes(buf as *mut u8, 0, 390);
+        for (i, field) in fields.iter().enumerate() {
+            let dst = (buf as *mut u8).add(i * 65);
+            core::ptr::copy_nonoverlapping(field.as_ptr(), dst, field.len().min(64));
+        }
+    }
+    0
+}
+
+/// sys_getdents64(fd, buf, count) — lit des entrées de répertoire.
+fn sys_getdents64(fd: u64, buf: u64, count: u64) -> i64 {
+    if fd as usize >= MAX_FD {
+        return -9; // -EBADF
+    }
+    if !user_buf_ok(buf, count) {
+        return -14; // -EFAULT
+    }
+    match unsafe { crate::vfs::getdents64(fd as usize, buf as *mut u8, count as usize) } {
+        Ok(n) => n as i64,
+        Err(e) => e,
     }
 }
 
@@ -702,16 +908,28 @@ unsafe fn read_user_str(ptr: u64) -> [u8; 64] {
     buf
 }
 
-/// sys_openat(dirfd, pathname, flags, mode) — ouvre un fichier initrd.
+/// sys_openat(dirfd, pathname, flags, mode) — ouvre un fichier.
+///
+/// Résout d'abord dans le VFS (fichiers /dev, /proc, répertoires), puis
+/// dans l'initrd. Retourne le descripteur, ou -errno.
 fn sys_openat(_dirfd: i64, pathname: u64, _flags: u64, _mode: u64) -> i64 {
     let name = unsafe { read_user_str(pathname) };
     let len = name.iter().position(|&b| b == 0).unwrap_or(64);
     let name_slice = &name[..len];
 
+    // 1. VFS : /dev, /proc, répertoires.
+    if let Some(inode) = unsafe { crate::vfs::lookup(name_slice) } {
+        return unsafe {
+            match crate::vfs::open(inode, None) {
+                Some(fd) => fd as i64,
+                None => -28, // -ENOSPC
+            }
+        };
+    }
+
+    // 2. Initrd : fichiers réguliers.
     match crate::initrd::find(name_slice) {
         Some((data, size)) => {
-            // Inode régulier (fichier du initrd) — la table des fds
-            // est celle du VFS (source de vérité — CR-1).
             let inode = crate::vfs::Inode {
                 file_type: crate::vfs::FileType::Regular,
                 minor: 0,
@@ -812,6 +1030,11 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_DUP => sys_dup(arg1 as u64),
         SYS_DUP2 => sys_dup2(arg1 as u64, arg2 as u64),
         SYS_PIPE => sys_pipe(arg1),
+        SYS_LSEEK => sys_lseek(arg1, arg2 as i64, arg3 as u32),
+        SYS_MPROTECT => sys_mprotect(arg1, arg2, arg3),
+        SYS_MUNMAP => sys_munmap(arg1, arg2),
+        SYS_UNAME => sys_uname(arg1),
+        SYS_GETDENTS64 => sys_getdents64(arg1, arg2, arg3),
         SYS_EXIT | SYS_EXIT_GROUP => {
             sys_exit(gpr_ptr, arg1)
         }

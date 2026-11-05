@@ -605,6 +605,77 @@ pub fn verify() {
     }
 }
 
+/// Résout une adresse virtuelle en adresse physique (fonction libre).
+///
+/// Version sans `KernelTables` : parcourt la PML4 courante. Utilisée par
+/// `sys_mprotect`/`sys_munmap` pour retrouver la page physique d'une
+/// adresse virtuelle utilisateur.
+pub unsafe fn translate(vaddr: u64) -> Option<u64> {
+    let pml4 = &*core::ptr::addr_of!(PML4);
+    let e = pml4.entry(pml4_index(vaddr));
+    if !e.is_present() {
+        return None;
+    }
+
+    let pdpt = &*(e.addr() as *const PageTable);
+    let e = pdpt.entry(pdpt_index(vaddr));
+    if !e.is_present() {
+        return None;
+    }
+
+    let pd = &*(e.addr() as *const PageTable);
+    let e = pd.entry(pd_index(vaddr));
+    if !e.is_present() {
+        return None;
+    }
+    if e.is_huge() {
+        return Some(e.addr() + (vaddr & 0x1F_FFFF));
+    }
+
+    let pt = &*(e.addr() as *const PageTable);
+    let e = pt.entry(pt_index(vaddr));
+    if !e.is_present() {
+        return None;
+    }
+    Some(e.addr() + (vaddr & 0xFFF))
+}
+
+/// Supprime le mapping d'une page 4 Kio à `vaddr`.
+///
+/// Parcourt la hiérarchie et efface l'entrée PT finale. Les tables
+/// intermédiaires ne sont pas libérées (elles sont noyau, de toute
+/// façon). Le TLB est invalidé pour l'adresse.
+///
+/// # Sécurité
+///
+/// Ne pas appeler depuis les IRQ. PSL = 0 requis (`invlpg`).
+pub unsafe fn unmap_page(vaddr: u64) {
+    let pml4 = &mut *core::ptr::addr_of_mut!(PML4);
+
+    let pml4e = pml4.entry(pml4_index(vaddr));
+    if !pml4e.is_present() {
+        return;
+    }
+    let pdpt = &mut *(pml4e.addr() as *mut PageTable);
+    let pdpte = pdpt.entry(pdpt_index(vaddr));
+    if !pdpte.is_present() {
+        return;
+    }
+    let pd = &mut *(pdpte.addr() as *mut PageTable);
+    let pde = pd.entry(pd_index(vaddr));
+    if !pde.is_present() || pde.is_huge() {
+        return;
+    }
+    let pt = &mut *(pde.addr() as *mut PageTable);
+    pt.set(pt_index(vaddr), Entry::empty());
+
+    core::arch::asm!(
+        "invlpg [{vaddr}]",
+        vaddr = in(reg) vaddr,
+        options(nostack, preserves_flags)
+    );
+}
+
 /* ------------------------------------------------------------
  * map_page — mappage dynamique d'une page 4 Kio (J3.3)
  * ------------------------------------------------------------ */

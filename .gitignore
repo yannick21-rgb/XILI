@@ -8,3 +8,5 @@ hello.txt
 assets/*.elf
 tools/*.elf
 tools/*.o
+__pycache__/
+*.pyc

@@ -11,8 +11,15 @@ from pathlib import Path
 TRAILER = b"TRAILER!!!"
 
 
-def _pad(data: bytes) -> bytes:
-    rem = len(data) % 4
+def _pad(data: bytes, base: int = 0) -> bytes:
+    """Pad `data` pour que l'adresse ABSOLUE suivante soit multiple de 4.
+
+    `base` est l'adresse absolue de `data` dans l'archive. Paddder par
+    rapport a la longueur du champ (et non a l'adresse absolue) place
+    la donnee au mauvais offset des que l'entree precedente a une
+    longueur qui n'est pas multiple de 4.
+    """
+    rem = (base + len(data)) % 4
     return data + (b"\x00" * (4 - rem) if rem else b"")
 
 
@@ -20,7 +27,9 @@ def _crc32(data: bytes) -> int:
     return zlib.crc32(data) & 0xFFFFFFFF
 
 
-def encode_entry(name: str, data: bytes, mode: int = 0o644) -> bytes:
+def encode_entry(
+    name: str, data: bytes, mode: int = 0o644, base: int = 0
+) -> bytes:
     name_bytes = name.encode("utf-8") + b"\x00"
     namesize = len(name_bytes)
     filesize = len(data)
@@ -40,17 +49,21 @@ def encode_entry(name: str, data: bytes, mode: int = 0o644) -> bytes:
         f"{namesize:08x}"
         f"{_crc32(b'070701' + b'\x00' * (8 * 13) + name_bytes + data):08x}"
     ).encode("ascii")
-    return _pad(header + name_bytes) + _pad(data)
+    # header(110) + nom : la donnee doit demarrer a une adresse absolue
+    # multiple de 4.
+    name_field = _pad(header + name_bytes, base)
+    data_field = _pad(data, base + len(name_field))
+    return name_field + data_field
 
 
 def build_cpio(entries: list[tuple[str, bytes]]) -> bytes:
     out = b""
     for name, data in entries:
-        out += encode_entry(name, data)
+        out += encode_entry(name, data, base=len(out))
         rem = len(out) % 4
         if rem:
             out += b"\x00" * (4 - rem)
-    out += encode_entry(TRAILER.decode("utf-8"), b"")
+    out += encode_entry(TRAILER.decode("utf-8"), b"", base=len(out))
     out += b"\x00" * 4
     return out
 

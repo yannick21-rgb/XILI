@@ -5,6 +5,27 @@ décisions prises.
 
 ---
 
+## 2026-11-05 — J4-A : syscalls manquants (lseek, getdents64, mprotect, munmap, uname)
+
+- **Bugs corriges** : `initrd.rs` alignait le nom sur 4 au lieu de `off+110`
+  (cpio newc n'aligne pas le nom) ; `mk-initrd.py` paddait par rapport a la
+  longueur du champ au lieu de l'adresse absolue ; `sys_mmap` avec `addr=0`
+  mappait a l'adresse 0 (page fault) ; `user_buf_ok` limitait a 4 Gio, trop
+  bas pour `MMAP_BASE` ; `sys_openat` ignorait le VFS (donc `/proc`) ;
+  `lookup` ne resolvait pas `proc` et `dev` (repertoires racines).
+- **Ajouts** : `lseek`, `getdents64`, `mprotect`, `munmap`, `uname` ;
+  `vfs::readdir` + `init_dir_entries` (liste `/proc` et `/dev`) ;
+  `paging::translate` (fonction libre) et `paging::unmap_page` ;
+  `vfs::read_fd_all` pour `mmap` de fichier.
+- **Sonde** : `tools/probe_j4a.elf` enchaine les 5 syscalls et ecrit
+  `probe_j4a: OK`. Cible `make test-j4a PROBE=... PROBE_MARKER=...`.
+- **Validation** : `make test` + `make test-uefi` + `make test-j4a` OK.
+  `make test-net` reste en echec (virtio-net non implemente — lot J5).
+- **Reste** : `PT_INTERP`/`AT_BASE` (musl), `futex`, `/proc` complet,
+  `ioctl` TTY, `clone`/`fork` reels.
+
+---
+
 ## 2026-11-05 — J4 : input tty resolue, chaine userland completee
 
 - Fix input : QEMU stdio avale les 2 premiers octets si stdin est alimente

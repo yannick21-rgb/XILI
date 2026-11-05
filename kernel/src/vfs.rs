@@ -77,6 +77,7 @@ static mut OPEN_FILES: [Option<FileDesc>; MAX_FILES] = [None; MAX_FILES];
 
 pub unsafe fn init() {
     crate::console::print(format_args!("vfs : pret\n"));
+    init_dir_entries();
 }
 
 /* ------------------------------------------------------------ *
@@ -152,6 +153,23 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
     }
 
     // 3. /proc minimal (J4).
+    // Le chemin peut etre "proc", "proc/self", "proc/meminfo", etc.
+    if path == b"proc" {
+        return Some(Inode {
+            file_type: FileType::Directory,
+            minor: 0,
+            data: core::ptr::null(),
+            size: 0,
+        });
+    }
+    if path == b"dev" {
+        return Some(Inode {
+            file_type: FileType::Directory,
+            minor: 1,
+            data: core::ptr::null(),
+            size: 0,
+        });
+    }
     if path.starts_with(b"proc/") {
         let proc_path = &path[5..];
         match proc_path {
@@ -668,4 +686,219 @@ pub unsafe fn write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i6
         FileType::Pipe => unsafe { pipe_write(fd, buf, count) },
         FileType::ProcFile => Err(-30),
     }
+}
+
+/// Lit le contenu complet d'un descripteur (fichier régulier).
+///
+/// Utilisé par `sys_mmap` pour copier un fichier projeté en mémoire.
+/// Retourne (pointeur, taille) ; le pointeur est valide tant que le
+/// descripteur reste ouvert.
+pub unsafe fn read_fd_all(fd: usize) -> Option<(*const u8, usize)> {
+    if fd >= MAX_FILES {
+        return None;
+    }
+    let file = match OPEN_FILES[fd] {
+        Some(ref f) => *f,
+        None => return None,
+    };
+    if file.inode.file_type != FileType::Regular {
+        return None;
+    }
+    Some((file.inode.data, file.inode.size))
+}
+
+/* ------------------------------------------------------------ *
+ * lseek — repositionner le curseur d'un descripteur
+ * ------------------------------------------------------------ */
+
+/// `lseek(fd, offset, whence)` — déplace le curseur de lecture/écriture.
+///
+/// `whence` : 0 = SEEK_SET (absolu), 1 = SEEK_CUR (relatif),
+/// 2 = SEEK_END (depuis la fin). Retourne la nouvelle position, ou
+/// -errno. Les descripteurs non seekable (tty, pipe) renvoient -ESPIPE.
+pub unsafe fn lseek(fd: usize, offset: i64, whence: u32) -> Result<i64, i64> {
+    if fd >= MAX_FILES {
+        return Err(-9);
+    }
+    let file = match OPEN_FILES[fd] {
+        Some(ref f) => *f,
+        None => return Err(-9),
+    };
+
+    // Seuls les fichiers reguliers et les fichiers /proc sont seekable.
+    match file.inode.file_type {
+        FileType::Regular | FileType::ProcFile => {}
+        _ => return Err(-29), // -ESPIPE
+    }
+
+    let size = file.inode.size as i64;
+    let base = match whence {
+        0 => 0i64,
+        1 => file.pos as i64,
+        2 => size,
+        _ => return Err(-22), // -EINVAL
+    };
+
+    let new_pos = base.saturating_add(offset);
+    if new_pos < 0 {
+        return Err(-22); // -EINVAL
+    }
+
+    if let Some(ref mut f) = OPEN_FILES[fd] {
+        f.pos = new_pos as usize;
+    }
+    Ok(new_pos)
+}
+
+/* ------------------------------------------------------------ *
+ * getdents64 — lecture d'un répertoire
+ * ------------------------------------------------------------ */
+
+/// Une entrée `struct linux_dirent64` (24 octets + nom).
+///
+/// Layout exact de l'ABI Linux x86-64 :
+///   d_ino    u64     (offset 0)
+///   d_off    i64     (offset 8)
+///   d_reclen u16     (offset 16)
+///   d_type   u8      (offset 18)
+///   d_name   char[]  (offset 19, NUL-terminé)
+#[repr(C)]
+pub struct Dirent64 {
+    pub d_ino: u64,
+    pub d_off: i64,
+    pub d_reclen: u16,
+    pub d_type: u8,
+    pub d_name: [u8; 0],
+}
+
+/// Types de fichiers `d_type` (DT_*).
+pub const DT_UNKNOWN: u8 = 0;
+pub const DT_FIFO: u8 = 1;
+pub const DT_CHR: u8 = 2;
+pub const DT_DIR: u8 = 4;
+pub const DT_REG: u8 = 6;
+
+/// Entrée de répertoire en mémoire noyau, avant sérialisation.
+pub struct DirEntry {
+    pub ino: u64,
+    pub name: [u8; 64],
+    pub name_len: usize,
+    pub dtype: u8,
+}
+
+/// Construit la liste des entrées d'un répertoire.
+///
+/// Seuls `/proc` et `/dev` sont des répertoires réels à ce stade ; le
+/// reste est un fichier régulier (l'initrd est plat).
+pub unsafe fn readdir(path: &[u8]) -> Option<&'static [DirEntry]> {
+    // /proc : les pseudo-fichiers exposes par le VFS.
+    if path == b"proc" {
+        return Some(&PROC_DIR);
+    }
+    // /dev : les peripheriques caracteres.
+    if path == b"dev" {
+        return Some(&DEV_DIR);
+    }
+    None
+}
+
+/// Entrées du répertoire `/proc`.
+static mut PROC_DIR: [DirEntry; 8] = [
+    DirEntry { ino: 1, name: [0; 64], name_len: 0, dtype: DT_DIR },
+    DirEntry { ino: 2, name: [0; 64], name_len: 0, dtype: DT_DIR },
+    DirEntry { ino: 3, name: [0; 64], name_len: 0, dtype: DT_REG },
+    DirEntry { ino: 4, name: [0; 64], name_len: 0, dtype: DT_REG },
+    DirEntry { ino: 5, name: [0; 64], name_len: 0, dtype: DT_REG },
+    DirEntry { ino: 6, name: [0; 64], name_len: 0, dtype: DT_REG },
+    DirEntry { ino: 7, name: [0; 64], name_len: 0, dtype: DT_REG },
+    DirEntry { ino: 8, name: [0; 64], name_len: 0, dtype: DT_REG },
+];
+
+/// Entrées du répertoire `/dev`.
+static mut DEV_DIR: [DirEntry; 5] = [
+    DirEntry { ino: 10, name: [0; 64], name_len: 0, dtype: DT_CHR },
+    DirEntry { ino: 11, name: [0; 64], name_len: 0, dtype: DT_CHR },
+    DirEntry { ino: 12, name: [0; 64], name_len: 0, dtype: DT_CHR },
+    DirEntry { ino: 13, name: [0; 64], name_len: 0, dtype: DT_CHR },
+    DirEntry { ino: 14, name: [0; 64], name_len: 0, dtype: DT_CHR },
+];
+
+/// Initialise les noms des entrées de répertoire (appelé depuis `init`).
+pub unsafe fn init_dir_entries() {
+    set_name(&mut PROC_DIR[0], b".");
+    set_name(&mut PROC_DIR[1], b"..");
+    set_name(&mut PROC_DIR[2], b"self");
+    set_name(&mut PROC_DIR[3], b"meminfo");
+    set_name(&mut PROC_DIR[4], b"maps");
+    set_name(&mut PROC_DIR[5], b"stat");
+    set_name(&mut PROC_DIR[6], b"status");
+    set_name(&mut PROC_DIR[7], b"fd");
+
+    set_name(&mut DEV_DIR[0], b"null");
+    set_name(&mut DEV_DIR[1], b"zero");
+    set_name(&mut DEV_DIR[2], b"random");
+    set_name(&mut DEV_DIR[3], b"tty");
+    set_name(&mut DEV_DIR[4], b"console");
+}
+
+unsafe fn set_name(entry: &mut DirEntry, name: &[u8]) {
+    let n = name.len().min(63);
+    entry.name[..n].copy_from_slice(&name[..n]);
+    entry.name_len = n;
+}
+
+/// `getdents64(fd, buf, count)` — lit des entrées de répertoire.
+///
+/// `fd` doit désigner un répertoire ouvert. Remplit `buf` avec des
+/// `struct linux_dirent64` consécutives, alignées sur 8 octets. Retourne
+/// le nombre d'octets écrits, 0 en fin de liste, ou -errno.
+pub unsafe fn getdents64(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> {
+    if fd >= MAX_FILES {
+        return Err(-9);
+    }
+    let file = match OPEN_FILES[fd] {
+        Some(ref f) => *f,
+        None => return Err(-9),
+    };
+    if file.inode.file_type != FileType::Directory {
+        return Err(-20); // -ENOTDIR
+    }
+
+    // Le chemin du répertoire est stocké dans `data` (pointeur noyau).
+    // On retrouve le nom via une table fixe : /proc ou /dev.
+    let path: &[u8] = if file.inode.minor == 0 { b"proc" } else { b"dev" };
+    let entries = match readdir(path) {
+        Some(e) => e,
+        None => return Err(-2), // -ENOENT
+    };
+
+    let mut written: usize = 0;
+    let mut ino: u64 = 0;
+
+    for entry in entries.iter() {
+        if entry.name_len == 0 {
+            continue;
+        }
+        // Reclen = 19 (champs) + nom + NUL, arrondi à 8.
+        let reclen = ((19 + entry.name_len + 1 + 7) & !7) as u16;
+        if written + reclen as usize > count {
+            break;
+        }
+
+        let base = buf.add(written) as *mut Dirent64;
+        (*base).d_ino = entry.ino;
+        (*base).d_off = (written + reclen as usize) as i64;
+        (*base).d_reclen = reclen;
+        (*base).d_type = entry.dtype;
+
+        let name_dst = buf.add(written + 19);
+        core::ptr::copy_nonoverlapping(entry.name.as_ptr(), name_dst, entry.name_len);
+        *name_dst.add(entry.name_len) = 0;
+
+        written += reclen as usize;
+        ino += 1;
+    }
+
+    let _ = ino;
+    Ok(written)
 }

@@ -140,18 +140,32 @@ J1: noyau charge, mode long actif, console OK.
 
 ---
 
-## J4 — Alpine, userland complet ⬜
+## J4 — Alpine, userland complet 🔄
 
 **Objectif** : faire tourner un vrai userland Linux.
 
 **Livrables**
-1. `ld-musl-x86_64.so.1`, `PT_INTERP`, `AT_BASE`, `AT_PHDR`.
-2. `futex` complet, `epoll`, `eventfd`, `signalfd`, `timerfd`.
-3. `/proc` minimal (`self/maps`, `self/exe`, `self/fd`, `stat`, `meminfo`).
-4. `/dev` (null, zero, random, tty), `devpts` (PTY).
-5. `memfd_create`, mémoire partagée, `SCM_RIGHTS`.
-6. `ioctl` TTY (`TCGETS`, `TCSETS`, `TIOCGWINSZ`).
-7. Image Alpine montée en `initrd` ou sur disque.
+1. `ld-musl-x86_64.so.1`, `PT_INTERP`, `AT_BASE`, `AT_PHDR`. ⬜
+2. `futex` complet, `epoll`, `eventfd`, `signalfd`, `timerfd`. ⬜
+3. `/proc` minimal (`self/maps`, `self/exe`, `self/fd`, `stat`, `meminfo`). 🔄
+   `getdents64` + liste `/proc` et `/dev` faits (J4-A).
+4. `/dev` (null, zero, random, tty), `devpts` (PTY). 🔄
+   `/dev` liste ; `devpts` absent.
+5. `memfd_create`, mémoire partagée, `SCM_RIGHTS`. ⬜
+6. `ioctl` TTY (`TCGETS`, `TCSETS`, `TIOCGWINSZ`). ⬜
+7. Image Alpine montée en `initrd` ou sur disque. ⬜
+
+**J4-A (2026-11-05) — syscalls manquants** ✅
+- `lseek` (SEEK_SET/CUR/END), `getdents64` (`struct linux_dirent64`),
+  `mprotect`, `munmap`, `uname` (6 × 65 octets).
+- `sys_mmap` refondu : `MAP_ANONYMOUS`, `MAP_PRIVATE`, `MAP_FIXED`,
+  `PROT_*`, adresse `MMAP_BASE` si `addr=0`, copie de fichier si `fd>=0`.
+- `paging::translate` + `paging::unmap_page`.
+- `vfs::readdir` + `init_dir_entries` ; `vfs::read_fd_all`.
+- Bugs corriges : `initrd.rs` (alignement du nom), `mk-initrd.py`
+  (padding absolu), `sys_openat` (VFS avant initrd), `lookup`
+  (`proc`/`dev` racines), `user_buf_ok` (limite 4 Gio → 128 Tio).
+- Sonde : `make test-j4a PROBE=probe_j4a.elf PROBE_MARKER="probe_j4a: OK"`.
 
 **Test d'acceptation**
 - `apk update` puis `apk add bash vim python3` réussissent (réseau en J5,

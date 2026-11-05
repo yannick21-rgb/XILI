@@ -5,7 +5,11 @@ décisions prises.
 
 ---
 
-## 2026-11-05 — J4-C : fork — blocage architectural identifié
+## 2026-11-05 — J4-C : fork — blocage architectural identifié (NON RÉSOLU)
+
+> État : **J4 n'est pas terminé**. Les commits J4-C sont marqués `wip`.
+> `probe_fork` affiche `F1: parent` puis `F: ECHEC wait4` : l'enfant
+> n'est pas exécuté. Ne pas considérer J4 comme validé.
 
 - **Diagnostic** : `sys_fork` crée la tâche enfant et le scheduler
   l'élit (vérifié par trace : `sched 1 -> 2`), mais l'enfant ne reprend
@@ -25,8 +29,6 @@ décisions prises.
   `user_task_entry` sautent à `resume_ring3`, `resume_ring3` lit RAX
   dans le bloc GPR sous le frame.
 - **Validation** : `make test` + `make test-uefi` + J4-A + J4-B OK.
-  `probe_fork` montre `F1: parent` puis `F: ECHEC wait4` — l'enfant
-  n'est pas exécuté.
 - **Reste** : refonte du modèle de processus — chaque userland doit
   avoir sa propre tâche ET un chemin de reprise R3 (passer par
   `entry_ring3` depuis un stub ring 0, pas par `iretq` du scheduler).

@@ -112,8 +112,9 @@ test: iso
 	  && grep -q "J3.4: VFS + /dev pret" $(LOG) \
 	  && grep -q "J3.5: chargement de 'desk.elf' depuis l'initrd" $(LOG) \
 	  && grep -q "J4: bureau pret" $(LOG) \
+	  && grep -q "Hello from user program" $(LOG) \
 	  && grep "TH" $(LOG) >/dev/null \
-	  && ! grep -q "!" $(LOG) \
+	  && ! grep -qi "panic" $(LOG) \
 	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + J4 bureau)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 

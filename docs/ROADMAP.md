@@ -14,8 +14,8 @@ Légende : ✅ fait · 🔄 en cours · ⬜ à faire
 | J0 | Cadrage, outillage, CI | 2–3 semaines | ✅ |
 | J1 | Boot + console | 1–2 mois | ✅ |
 | J2 | Mémoire | 2–4 mois | ✅ |
-| J3 | Processus + shell | 3–6 mois | 🔄 |
-| J4 | Alpine (userland complet) | 4–8 mois | ⬜ |
+| J3 | Processus + shell | 3–6 mois | ✅ |
+| J4 | Alpine (userland complet) | 4–8 mois | 🔄 |
 | J5 | Réseau | 2–4 mois | ⬜ |
 | J6 | Stockage robuste | 2–4 mois | ⬜ |
 | J7 | Graphique + compositeur | 6–12 mois | ⬜ |

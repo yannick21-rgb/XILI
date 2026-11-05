@@ -5,6 +5,25 @@ décisions prises.
 
 ---
 
+## 2026-11-05 — J4 : input tty resolue, chaine userland completee
+
+- Fix input : QEMU stdio avale les 2 premiers octets si stdin est alimente
+  immediatement (GRUB) -> `hello.elf\n` arrivait `llo.elf`. Fix : pipe +
+  `sleep 6` avant l'envoi dans la recette `test` du Makefile.
+- Lot shell J4 : `shell.elf` (marker -> read -> echo -> strip -> execve) ->
+  execve `hello.elf` -> `Hello from user program!` -> exit 0. **TEST OK**.
+- Gate : `! grep -qi "panic"` (le `!` legitime de hello est OK).
+
+---
+
+## 2026-11-05 — J4 : bureau userland + chaine user->user valide
+
+- Lot bureau J4 v2 : `desk.elf` cadre multi-write (marker + `+--------+`).
+- Lot J4 lot3 : `desk.elf` -> execve `hello.elf` -> `Hello from user program!`
+  (chaine userland -> userland, PID conserve). **TEST OK**.
+
+---
+
 ## 2026-11-04 — Dead code résiduel — dernier lot (W10 final)
 
 - Suppression des fonds morts identifiés en revue : imports/variables

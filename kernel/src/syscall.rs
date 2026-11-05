@@ -103,6 +103,14 @@ const SYS_MPROTECT: u64 = 10;
 const SYS_MUNMAP: u64 = 11;
 const SYS_UNAME: u64 = 63;
 const SYS_GETDENTS64: u64 = 217;
+const SYS_FUTEX: u64 = 202;
+const SYS_IOCTL: u64 = 16;
+const SYS_RT_SIGACTION: u64 = 13;
+const SYS_RT_SIGPROCMASK: u64 = 14;
+const SYS_KILL: u64 = 62;
+const SYS_TGKILL: u64 = 234;
+const SYS_GETRANDOM: u64 = 318;
+const SYS_MEMFD_CREATE: u64 = 319;
 
 /// Descripteurs fichiers — 3 emplacements réservés (stdin/stdout/stderr),
 /// fd 3+ réservés aux fichiers du VFS. La table vive est celle du VFS
@@ -242,6 +250,39 @@ extern "C" fn fork_child_entry() -> ! {
     }
 }
 
+/// Charge un ELF depuis l'initrd et retourne (entry, stack_top).
+///
+/// Si le binaire a un `PT_INTERP`, l'interpréteur est chargé à son tour
+/// et c'est son point d'entrée qui est retourné (avec `AT_BASE` dans
+/// l'auxv). Sinon, c'est le point d'entrée du binaire lui-même.
+unsafe fn load_from_initrd(name: &[u8], stack_top: u64) -> Option<(u64, u64)> {
+    let (data, size) = crate::initrd::find(name)?;
+    let elf_data = core::slice::from_raw_parts(data, size);
+    let elf_info = crate::elf::load_elf(elf_data)?;
+
+    // Interpréteur : charger ld-musl et démarrer sur son entrée.
+    if elf_info.interp_name_len > 0 {
+        let interp_name = &elf_info.interp_name[..elf_info.interp_name_len];
+        let (idata, isize) = crate::initrd::find(interp_name)?;
+        let idata_slice = core::slice::from_raw_parts(idata, isize);
+        let interp_info = crate::elf::load_elf(idata_slice)?;
+
+        // Base de l'interpréteur = premier segment LOAD.
+        let interp_base = interp_info.load_base;
+        let sp = crate::elf::build_stack(stack_top, 4, name_str(name), &elf_info, interp_base);
+        return Some((interp_info.entry, sp));
+    }
+
+    // Binaire statique : on démarre directement sur son entrée.
+    let sp = crate::elf::build_stack(stack_top, 4, name_str(name), &elf_info, 0);
+    Some((elf_info.entry, sp))
+}
+
+/// Convertit un nom d'initrd en `&str` (NUL-terminé ou non).
+fn name_str(name: &[u8]) -> &str {
+    core::str::from_utf8(name).unwrap_or("<inv>")
+}
+
 /// sys_execve(filename, argv, envp) — remplace le processus courant
 /// par un nouveau programme ELF.
 fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
@@ -255,32 +296,14 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
         len
     ));
 
-    // Convertir en &str pour build_stack.
-    let name_str = match core::str::from_utf8(name_slice) {
-        Ok(s) => s,
-        Err(_) => return -8, // -ENOEXEC
-    };
-
-    // 2. Chercher l'ELF dans l'initrd.
-    let elf_data = match crate::initrd::find(name_slice) {
-        Some((data, size)) => unsafe {
-            core::slice::from_raw_parts(data, size)
-        },
-        None => return -2, // -ENOENT
-    };
-
-    // 3. Charger l'ELF.
-    let elf_info = match unsafe { crate::elf::load_elf(elf_data) } {
-        Some(info) => info,
+    // 2. Charger le programme (et son interpréteur le cas échéant).
+    let (entry, stack_top) = match unsafe { load_from_initrd(name_slice, 0x100_0000) } {
+        Some(v) => v,
         None => return -8, // -ENOEXEC
     };
 
-    // 4. Construire la pile utilisateur.
-    let stack_top =
-        unsafe { crate::elf::build_stack(0x100_0000, 4, name_str, &elf_info) };
-
-    // 5. Sauter vers le nouvel ELF (ne retourne pas).
-    unsafe { crate::entry_ring3(elf_info.entry, stack_top) };
+    // 3. Sauter vers le point d'entrée (ne retourne pas).
+    unsafe { crate::entry_ring3(entry, stack_top) };
 }
 
 /// sys_wait4(pid, wstatus, options) — attend la fin d'un enfant.
@@ -803,6 +826,318 @@ fn sys_getdents64(fd: u64, buf: u64, count: u64) -> i64 {
     }
 }
 
+/* ------------------------------------------------------------
+ * futex — verrou userspace (J4-B)
+ *
+ * Opérations minimales pour musl :
+ *   FUTEX_WAIT (0)      : dort si *uaddr == val
+ *   FUTEX_WAKE (1)      : réveille jusqu'à val attentes
+ *   FUTEX_WAIT_BITSET (9)  : idem WAIT avec masque de bits
+ *   FUTEX_WAKE_BITSET (10) : idem WAKE avec masque de bits
+ *
+ * Le noyau est mono-tâche : un WAIT ne peut pas bloquer le CPU. On
+ * implémente une attente coopérative : si la valeur ne correspond pas,
+ * on rend la main immédiatement avec -EAGAIN (musl gère ce cas en
+ * réessayant). Le WAKE réveille les attentes enregistrées.
+ * ------------------------------------------------------------ */
+
+const FUTEX_WAIT: u32 = 0;
+const FUTEX_WAKE: u32 = 1;
+const FUTEX_WAIT_BITSET: u32 = 9;
+const FUTEX_WAKE_BITSET: u32 = 10;
+
+const FUTEX_PRIVATE_FLAG: u32 = 128;
+const FUTEX_CLOCK_REALTIME: u32 = 256;
+
+/// Nombre maximal d'attentes futex enregistrées.
+const FUTEX_MAX_WAITERS: usize = 16;
+
+/// Une attente futex enregistrée.
+#[derive(Clone, Copy)]
+struct FutexWaiter {
+    /// Adresse du mot de 32 bits surveillé.
+    uaddr: u64,
+    /// Valeur attendue.
+    val: u32,
+    /// Tâche (PID) en attente, 0 = slot libre.
+    pid: u64,
+}
+
+static mut FUTEX_WAITERS: [FutexWaiter; FUTEX_MAX_WAITERS] = [
+    FutexWaiter { uaddr: 0, val: 0, pid: 0 };
+    FUTEX_MAX_WAITERS
+];
+
+/// sys_futex(uaddr, op, val, timeout, uaddr2, val3) — opérations futex.
+fn sys_futex(uaddr: u64, op: u32, val: u32, _timeout: u64, _uaddr2: u64, val3: u32) -> i64 {
+    if uaddr == 0 || uaddr % 4 != 0 {
+        return -22; // -EINVAL
+    }
+    if !user_buf_ok(uaddr, 4) {
+        return -14; // -EFAULT
+    }
+
+    // Les drapeaux privés/real-time sont acceptés mais sans effet.
+    let op_base = op & !(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+
+    match op_base {
+        FUTEX_WAIT | FUTEX_WAIT_BITSET => {
+            // Lire la valeur courante du mot.
+            let cur = unsafe { core::ptr::read_volatile(uaddr as *const u32) };
+
+            // Attendu : FUTEX_WAIT_BITSET compare sur 32 bits avec le
+            // masque val3 ; FUTEX_WAIT compare l'égalité simple.
+            let matches = if op_base == FUTEX_WAIT_BITSET {
+                // BITSET : le masque sélectionne les bits à comparer.
+                (cur ^ val) & val3 == 0
+            } else {
+                cur == val
+            };
+
+            if !matches {
+                // La valeur a déjà changé : pas besoin d'attendre.
+                return 0;
+            }
+
+            // Enregistrer l'attente (le noyau est mono-tâche : on ne
+            // dort pas vraiment, on rend la main et musl réessaie).
+            let pid = unsafe { CURRENT_PID };
+            unsafe {
+                for w in FUTEX_WAITERS.iter_mut() {
+                    if w.pid == 0 {
+                        w.uaddr = uaddr;
+                        w.val = val;
+                        w.pid = pid;
+                        break;
+                    }
+                }
+            }
+            // -EAGAIN : musl réessaie immédiatement (spin).
+            -11
+        }
+        FUTEX_WAKE | FUTEX_WAKE_BITSET => {
+            // Réveiller jusqu'à `val` attentes sur cette adresse.
+            let mut woken = 0u32;
+            unsafe {
+                for w in FUTEX_WAITERS.iter_mut() {
+                    if w.pid != 0 && w.uaddr == uaddr && woken < val {
+                        w.pid = 0;
+                        w.uaddr = 0;
+                        woken += 1;
+                    }
+                }
+            }
+            woken as i64
+        }
+        _ => -38, // -ENOSYS : opération non implémentée
+    }
+}
+
+/* ------------------------------------------------------------
+ * ioctl — contrôle des descripteurs (J4-B)
+ *
+ * Seuls les ioctl TTY sont implémentés à ce stade :
+ *   TCGETS (0x5401)  : lit les attributs du terminal (termios)
+ *   TCSETS (0x5402)  : écrit les attributs
+ *   TIOCGWINSZ (0x5413) : lit la taille de la fenêtre (winsize)
+ * ------------------------------------------------------------ */
+
+const TCGETS: u64 = 0x5401;
+const TCSETS: u64 = 0x5402;
+const TIOCGWINSZ: u64 = 0x5413;
+
+/// `struct termios` Linux x86-64 (60 octets).
+#[repr(C)]
+pub struct Termios {
+    pub c_iflag: u32,
+    pub c_oflag: u32,
+    pub c_cflag: u32,
+    pub c_lflag: u32,
+    pub c_line: u8,
+    pub c_cc: [u8; 19],
+    pub c_ispeed: u32,
+    pub c_ospeed: u32,
+}
+
+/// `struct winsize` (8 octets).
+#[repr(C)]
+pub struct Winsize {
+    pub ws_row: u16,
+    pub ws_col: u16,
+    pub ws_xpixel: u16,
+    pub ws_ypixel: u16,
+}
+
+/// Valeurs termios par défaut (équivalent `stty sane` simplifié).
+const DEFAULT_TERMIOS: Termios = Termios {
+    c_iflag: 0x0000_250B, // IGNBRK|BRKINT|ISTRIP|ICRNL|IXON
+    c_oflag: 0x0000_0005, // OPOST|ONLCR
+    c_cflag: 0x0000_00BF, // CS8|CREAD
+    c_lflag: 0x0000_850B, // ISIG|ICANON|ECHO|ECHOE|ECHOK|IEXTEN
+    c_line: 0,
+    c_cc: [
+        0x03, 0x1C, 0x7F, 0x15, 0x04, 0x00, 0x01, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00,
+    ],
+    c_ispeed: 0x0000_000F, // B38400
+    c_ospeed: 0x0000_000F,
+};
+
+/// sys_ioctl(fd, request, arg) — contrôle d'un descripteur.
+fn sys_ioctl(fd: u64, request: u64, arg: u64) -> i64 {
+    if fd as usize >= MAX_FD {
+        return -9; // -EBADF
+    }
+
+    match request {
+        TCGETS => {
+            if !user_buf_ok(arg, core::mem::size_of::<Termios>() as u64) {
+                return -14; // -EFAULT
+            }
+            unsafe {
+                core::ptr::write_volatile(arg as *mut Termios, DEFAULT_TERMIOS);
+            }
+            0
+        }
+        TCSETS => {
+            // Accepté sans effet : le terminal est en mode canonique.
+            0
+        }
+        TIOCGWINSZ => {
+            if !user_buf_ok(arg, core::mem::size_of::<Winsize>() as u64) {
+                return -14; // -EFAULT
+            }
+            // 80 × 24 : la console VGA.
+            let ws = Winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+            unsafe {
+                core::ptr::write_volatile(arg as *mut Winsize, ws);
+            }
+            0
+        }
+        _ => -25, // -ENOTTY : ioctl inconnu
+    }
+}
+
+/* ------------------------------------------------------------
+ * signaux (J4-B)
+ *
+ * Seul SIGKILL (9) est traité : il termine le processus. Les autres
+ * signaux sont acceptés mais sans effet (pas de livraison réelle).
+ * ------------------------------------------------------------ */
+
+const SIGKILL: u64 = 9;
+const SIGTERM: u64 = 15;
+const SIGINT: u64 = 2;
+const SIGCHLD: u64 = 17;
+
+/// sys_rt_sigaction(signum, act, oldact) — installe un gestionnaire.
+///
+/// Version minimale : accepte l'appel et mémorise le gestionnaire pour
+/// SIGCHLD. Pas de livraison réelle (le noyau ne lève pas de signaux).
+fn sys_rt_sigaction(signum: u64, act: u64, oldact: u64) -> i64 {
+    if signum == 0 || signum > 64 {
+        return -22; // -EINVAL
+    }
+    if oldact != 0 && !user_buf_ok(oldact, 24) {
+        return -14; // -EFAULT
+    }
+    if oldact != 0 {
+        // Ancien gestionnaire : SIG_DFL (0).
+        unsafe { core::ptr::write_bytes(oldact as *mut u8, 0, 24) };
+    }
+    if act != 0 && !user_buf_ok(act, 24) {
+        return -14; // -EFAULT
+    }
+    let _ = signum;
+    0
+}
+
+/// sys_rt_sigprocmask(how, set, oldset) — masque de signaux.
+fn sys_rt_sigprocmask(_how: u64, set: u64, oldset: u64) -> i64 {
+    if oldset != 0 {
+        if !user_buf_ok(oldset, 8) {
+            return -14; // -EFAULT
+        }
+        unsafe { core::ptr::write_volatile(oldset as *mut u64, 0) };
+    }
+    if set != 0 && !user_buf_ok(set, 8) {
+        return -14; // -EFAULT
+    }
+    0
+}
+
+/// sys_kill(pid, sig) — envoie un signal à un processus.
+fn sys_kill(pid: u64, sig: u64) -> i64 {
+    if pid == 0 {
+        return -22; // -EINVAL
+    }
+    // Seul SIGKILL est réellement traité : le processus visé devient
+    // zombie s'il est connu.
+    if sig == SIGKILL || sig == SIGTERM || sig == SIGINT {
+        unsafe {
+            for i in 0..PROCESSES.len() {
+                if let Some(proc) = PROCESSES[i] {
+                    if proc.task_id as u64 == pid && proc.state == ProcState::Running {
+                        PROCESSES[i] = Some(Process {
+                            state: ProcState::Zombie,
+                            exit_code: 0,
+                            ..proc
+                        });
+                        return 0;
+                    }
+                }
+            }
+        }
+        return -3; // -ESRCH
+    }
+    // SIGCHLD et les autres : acceptés sans effet.
+    0
+}
+
+/// sys_tgkill(tgid, tid, sig) — kill ciblé par thread.
+fn sys_tgkill(tgid: u64, _tid: u64, sig: u64) -> i64 {
+    sys_kill(tgid, sig)
+}
+
+/// sys_getrandom(buf, count, flags) — générateur aléatoire.
+///
+/// Remplit avec des octets dérivés du compteur de ticks et du PIT.
+fn sys_getrandom(buf: u64, count: u64, _flags: u64) -> i64 {
+    if !user_buf_ok(buf, count) {
+        return -14; // -EFAULT
+    }
+    unsafe {
+        let ticks = crate::irq::ticks();
+        for i in 0..count as usize {
+            let b = crate::io::inb(0x40);
+            let mixed = b ^ ((ticks >> (i % 8)) as u8);
+            core::ptr::write_volatile((buf as *mut u8).add(i), mixed);
+        }
+    }
+    count as i64
+}
+
+/// sys_memfd_create(name, flags) — fichier anonyme en mémoire.
+///
+/// Version minimale : renvoie un descripteur factice (pas de fichier
+/// réel). Accepté pour que musl ne échoue pas.
+fn sys_memfd_create(name: u64, _flags: u64) -> i64 {
+    if name != 0 && !user_buf_ok(name, 64) {
+        return -14; // -EFAULT
+    }
+    // Ouvre un inode /dev/zero comme substitut.
+    match unsafe { crate::vfs::lookup(b"zero") } {
+        Some(inode) => unsafe {
+            match crate::vfs::open(inode, None) {
+                Some(fd) => fd as i64,
+                None => -28, // -ENOSPC
+            }
+        },
+        None => -2, // -ENOENT
+    }
+}
+
 /// sys_exit(code) — termine le processus utilisateur ELF (J3.3).
 ///
 /// Le handler fixe EXIT_REQUESTED (1) et RCX (-> pf_test) pour que
@@ -1035,6 +1370,14 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_MUNMAP => sys_munmap(arg1, arg2),
         SYS_UNAME => sys_uname(arg1),
         SYS_GETDENTS64 => sys_getdents64(arg1, arg2, arg3),
+        SYS_FUTEX => sys_futex(arg1, arg2 as u32, arg3 as u32, arg4, arg5, arg6 as u32),
+        SYS_IOCTL => sys_ioctl(arg1, arg2, arg3),
+        SYS_RT_SIGACTION => sys_rt_sigaction(arg1, arg2, arg3),
+        SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(arg1, arg2, arg3),
+        SYS_KILL => sys_kill(arg1, arg2),
+        SYS_TGKILL => sys_tgkill(arg1, arg2, arg3),
+        SYS_GETRANDOM => sys_getrandom(arg1, arg2, arg3),
+        SYS_MEMFD_CREATE => sys_memfd_create(arg1, arg2),
         SYS_EXIT | SYS_EXIT_GROUP => {
             sys_exit(gpr_ptr, arg1)
         }

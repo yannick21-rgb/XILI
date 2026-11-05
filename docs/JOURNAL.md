@@ -5,6 +5,27 @@ décisions prises.
 
 ---
 
+## 2026-11-05 — J4-B : PT_INTERP, futex, ioctl TTY, signaux, /proc
+
+- **PT_INTERP** : `load_elf` lit le segment, `ElfInfo` porte `interp_name`,
+  `load_base`, `interp`. `build_stack` écrit `AT_BASE`. Le noyau démarre
+  sur l'entrée de ld-musl, pas sur celle du programme. `sys_execve` et
+  `run_initrd_elf` partagent le chemin `load_from_initrd`.
+- **futex** : WAIT/WAKE/WAIT_BITSET/WAKE_BITSET. Attente coopérative
+  (le noyau est mono-tâche) : WAIT enregistre l'attente et rend -EAGAIN
+  si la valeur correspond, musl réessaie. WAKE libère les attentes.
+- **ioctl TTY** : TCGETS (termios 60 octets), TCSETS, TIOCGWINSZ (80×24).
+- **signaux** : rt_sigaction, rt_sigprocmask, kill, tgkill (SIGKILL/
+  SIGTERM/SIGINT marquent le processus zombie ; SIGCHLD accepté sans
+  effet). getrandom (PIT + ticks), memfd_create (substitut /dev/zero).
+- **/proc/self/maps** : format Linux réel (hex64/hex32), 3 segments.
+- **Sonde** : `tools/probe_j4b.elf` (10 étapes). `make test-j4a PROBE=...`.
+- **Validation** : `make test` + `make test-uefi` + `make test-j4a` OK.
+- **Reste** : `clone`/`fork` réels, `/proc` complet (stat, status),
+  `epoll`/`eventfd`/`signalfd`, `SCM_RIGHTS`, image Alpine.
+
+---
+
 ## 2026-11-05 — J4-A : syscalls manquants (lseek, getdents64, mprotect, munmap, uname)
 
 - **Bugs corriges** : `initrd.rs` alignait le nom sur 4 au lieu de `off+110`

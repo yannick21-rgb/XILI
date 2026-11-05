@@ -52,6 +52,7 @@ const EM_X86_64: u16 = 62;
 
 const PT_LOAD: u32 = 1;
 const PT_PHDR: u32 = 6;
+const PT_INTERP: u32 = 3;
 
 const PF_X: u32 = 1;
 
@@ -62,6 +63,7 @@ const AT_NULL: u64 = 0;
 const AT_PHDR: u64 = 3;
 const AT_PHENT: u64 = 4;
 const AT_PHNUM: u64 = 5;
+const AT_BASE: u64 = 7;
 const AT_ENTRY: u64 = 9;
 const AT_PAGESZ: u64 = 17;
 
@@ -73,6 +75,13 @@ pub struct ElfInfo {
     pub entry: u64,
     pub phdr_vaddr: u64,
     pub phnum: u16,
+    /// Adresse virtuelle de l'interpréteur (ld-musl), 0 si absent.
+    pub interp: u64,
+    /// Adresse virtuelle du premier segment LOAD (base de l'image).
+    pub load_base: u64,
+    /// Nom de l'interpréteur (chemin NUL-terminé dans le fichier).
+    pub interp_name: [u8; 128],
+    pub interp_name_len: usize,
 }
 
 #[repr(C)]
@@ -130,7 +139,43 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
     let phnum = ehdr.e_phnum;
 
     let mut phdr_vaddr: u64 = 0;
+    let mut interp: u64 = 0;
+    let mut load_base: u64 = 0;
+    let mut interp_name: [u8; 128] = [0; 128];
+    let mut interp_name_len: usize = 0;
 
+    // Premier passage : repérer PT_INTERP et la base de chargement.
+    for i in 0..phnum as usize {
+        let off = phoff + i * size_of::<Elf64Phdr>();
+        let phdr = parse_phdr(data, off)?;
+
+        match phdr.p_type {
+            PT_PHDR => {
+                phdr_vaddr = phdr.p_vaddr;
+            }
+            PT_INTERP => {
+                // Le nom est une chaîne NUL-terminée dans le fichier.
+                let start = phdr.p_offset as usize;
+                let end = core::cmp::min(start + phdr.p_filesz as usize, data.len());
+                let mut n = 0usize;
+                let mut i = start;
+                while i < end && n < 127 && data[i] != 0 {
+                    interp_name[n] = data[i];
+                    n += 1;
+                    i += 1;
+                }
+                interp_name_len = n;
+            }
+            PT_LOAD => {
+                if load_base == 0 {
+                    load_base = phdr.p_vaddr;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Deuxième passage : charger les segments LOAD.
     for i in 0..phnum as usize {
         let off = phoff + i * size_of::<Elf64Phdr>();
         let phdr = parse_phdr(data, off)?;
@@ -142,9 +187,6 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
         }
 
         match phdr.p_type {
-            PT_PHDR => {
-                phdr_vaddr = phdr.p_vaddr;
-            }
             PT_LOAD => {
                 let mut page_flags = crate::mm::paging::PRESENT
                     | crate::mm::paging::WRITABLE
@@ -213,6 +255,10 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
         entry: ehdr.e_entry,
         phdr_vaddr,
         phnum,
+        interp,
+        load_base,
+        interp_name,
+        interp_name_len,
     })
 }
 
@@ -225,6 +271,7 @@ pub unsafe fn build_stack(
     _num_pages: usize,
     name: &str,
     elf: &ElfInfo,
+    interp_base: u64,
 ) -> u64 {
     const ARG_MAX: usize = 32;
 
@@ -232,7 +279,7 @@ pub unsafe fn build_stack(
     let mut argv: [u64; ARG_MAX] = [0; ARG_MAX];
     let envp: [u64; ARG_MAX] = [0; ARG_MAX];
     let envc: usize = 0;
-    let mut auxv: [AuxvEntry; 8] = [AuxvEntry { a_type: 0, a_val: 0 }; 8];
+    let mut auxv: [AuxvEntry; 16] = [AuxvEntry { a_type: 0, a_val: 0 }; 16];
     let mut aux_idx: usize = 0;
 
     argv[0] = stack_base_vaddr - 8 * (name.len() + 1) as u64;
@@ -242,6 +289,9 @@ pub unsafe fn build_stack(
     auxv[aux_idx] = AuxvEntry { a_type: AT_PHENT, a_val: size_of::<Elf64Phdr>() as u64 };
     aux_idx += 1;
     auxv[aux_idx] = AuxvEntry { a_type: AT_PHNUM, a_val: elf.phnum as u64 };
+    aux_idx += 1;
+    // AT_BASE : adresse de l'interpréteur (0 si binaire statique).
+    auxv[aux_idx] = AuxvEntry { a_type: AT_BASE, a_val: interp_base };
     aux_idx += 1;
     auxv[aux_idx] = AuxvEntry { a_type: AT_PAGESZ, a_val: PAGE_SIZE as u64 };
     aux_idx += 1;

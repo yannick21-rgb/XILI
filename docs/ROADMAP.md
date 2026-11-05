@@ -167,6 +167,19 @@ J1: noyau charge, mode long actif, console OK.
   (`proc`/`dev` racines), `user_buf_ok` (limite 4 Gio → 128 Tio).
 - Sonde : `make test-j4a PROBE=probe_j4a.elf PROBE_MARKER="probe_j4a: OK"`.
 
+**J4-B (2026-11-05) — interpréteur, futex, TTY, signaux** ✅
+- `PT_INTERP` : `load_elf` lit le segment, `ElfInfo` porte `interp_name`
+  et `load_base`, `build_stack` écrit `AT_BASE`. Le noyau démarre sur
+  l'entrée de ld-musl. `sys_execve` et `run_initrd_elf` partagent
+  `load_from_initrd`.
+- `futex` : WAIT/WAKE/WAIT_BITSET/WAKE_BITSET (attente coopérative,
+  `-EAGAIN` si la valeur correspond — musl réessaie).
+- `ioctl` : TCGETS (termios 60 o), TCSETS, TIOCGWINSZ (80×24).
+- Signaux : `rt_sigaction`, `rt_sigprocmask`, `kill`, `tgkill`.
+  `getrandom`, `memfd_create`.
+- `/proc/self/maps` au format Linux réel.
+- Sonde : `make test-j4a PROBE=probe_j4b.elf PROBE_MARKER="probe_j4b: OK"`.
+
 **Test d'acceptation**
 - `apk update` puis `apk add bash vim python3` réussissent (réseau en J5,
   donc d'abord depuis un cache local).

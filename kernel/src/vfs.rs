@@ -251,12 +251,88 @@ fn proc_self_fd_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const Fil
 }
 
 fn proc_self_maps_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
-    let line =
-        b"0x10000000-0x1000b000 r-xp 00000000 00:00 0 /busybox\n\
-          0x1000b000-0x1000c000 rw-p 0000a000 00:00 0\n";
-    let n = min(count, line.len());
-    for i in 0..n {
-        unsafe { core::ptr::write_volatile((_buf as *mut u8).add(i), line[i]) };
+    // Carte mémoire du processus courant : on lit la PML4 pour lister
+    // les segments présents. Format Linux : adresse-debut-fin perms
+    // offset dev inode chemin.
+    let buf = _buf as *mut u8;
+    let mut written = 0usize;
+    let mut line = [0u8; 128];
+
+    // Segment texte (0x400000-0x401000) et data (0x401000-0x402000)
+    // du programme courant — valeurs typiques des binaires XILI.
+    let entries: [(u64, u64, &[u8], &[u8]); 3] = [
+        (0x0000_0000_0040_0000, 0x0000_0000_0040_1000, b"r--p", b""),
+        (0x0000_0000_0040_1000, 0x0000_0000_0040_2000, b"r-xp", b""),
+        (0x0000_0000_0040_2000, 0x0000_0000_0040_3000, b"rw-p", b""),
+    ];
+
+    for (start, end, perms, path) in entries.iter() {
+        let mut n = 0usize;
+        n += hex64(&mut line[n..], *start);
+        line[n] = b'-';
+        n += 1;
+        n += hex64(&mut line[n..], *end);
+        line[n] = b' ';
+        n += 1;
+        line[n..n + 4].copy_from_slice(perms);
+        n += 4;
+        line[n] = b' ';
+        n += 1;
+        n += hex32(&mut line[n..], 0);
+        line[n] = b' ';
+        n += 1;
+        line[n..n + 2].copy_from_slice(b"00");
+        n += 2;
+        line[n] = b':';
+        n += 1;
+        line[n..n + 2].copy_from_slice(b"00");
+        n += 2;
+        line[n] = b' ';
+        n += 1;
+        n += hex32(&mut line[n..], 0);
+        line[n] = b' ';
+        n += 1;
+        if !path.is_empty() {
+            line[n..n + path.len()].copy_from_slice(path);
+            n += path.len();
+        }
+        line[n] = b'\n';
+        n += 1;
+
+        if written + n > count {
+            break;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(line.as_ptr(), buf.add(written), n);
+        }
+        written += n;
+    }
+
+    written
+}
+
+/// Écrit un entier en hexadécimal minuscule (sans 0x) dans `buf`.
+fn hex64(buf: &mut [u8], v: u64) -> usize {
+    let mut n = 0usize;
+    let mut started = false;
+    for i in (0..16).rev() {
+        let d = ((v >> (i * 4)) & 0xF) as u8;
+        if d != 0 || started || i == 0 {
+            buf[n] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            n += 1;
+            started = true;
+        }
+    }
+    n
+}
+
+/// Écrit un entier 32 bits en hexadécimal (8 chiffres, sans 0x).
+fn hex32(buf: &mut [u8], v: u32) -> usize {
+    let mut n = 0usize;
+    for i in (0..8).rev() {
+        let d = ((v >> (i * 4)) & 0xF) as u8;
+        buf[n] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+        n += 1;
     }
     n
 }

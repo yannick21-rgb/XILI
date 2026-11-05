@@ -420,15 +420,49 @@ fn run_initrd_elf(name: &str, user_stack_top: u64) -> ! {
         }
     };
 
-    let stack_top = unsafe { elf::build_stack(user_stack_top, 4, name, &elf_info) };
+    // Interpréteur (ld-musl) : on démarre sur son entrée, pas sur celle
+    // du programme. AT_BASE pointe sur la base de l'interpréteur.
+    let (entry, stack_top) = if elf_info.interp_name_len > 0 {
+        let interp_name = &elf_info.interp_name[..elf_info.interp_name_len];
+        let interp_str = core::str::from_utf8(interp_name).unwrap_or("<inv>");
+        console::print(format_args!(
+            "  interpréteur : '{}' (PT_INTERP)\n",
+            interp_str
+        ));
+
+        let (idata, isize) = match crate::initrd::find(interp_name) {
+            Some(v) => v,
+            None => {
+                console::print(format_args!(
+                    "J3.5: ECHEC — interpréteur '{}' introuvable\n",
+                    interp_str
+                ));
+                loop { unsafe { asm!("hlt") } }
+            }
+        };
+        let idata_slice = unsafe { core::slice::from_raw_parts(idata, isize) };
+        let interp_info = match unsafe { elf::load_elf(idata_slice) } {
+            Some(info) => info,
+            None => {
+                console::print(format_args!("J3.5: ECHEC — interpréteur ELF invalide\n"));
+                loop { unsafe { asm!("hlt") } }
+            }
+        };
+        let interp_base = interp_info.load_base;
+        let sp = unsafe { elf::build_stack(user_stack_top, 4, name, &elf_info, interp_base) };
+        (interp_info.entry, sp)
+    } else {
+        let sp = unsafe { elf::build_stack(user_stack_top, 4, name, &elf_info, 0) };
+        (elf_info.entry, sp)
+    };
 
     console::print(format_args!(
         "  ELF entre  = {:#018x} ({} octets)\n",
-        elf_info.entry, elf_data.len()
+        entry, elf_data.len()
     ));
     console::print(format_args!("  execution en R3 via iretq...\n"));
 
-    unsafe { entry_ring3(elf_info.entry, stack_top) };
+    unsafe { entry_ring3(entry, stack_top) };
 }
 
 #[panic_handler]

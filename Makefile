@@ -97,8 +97,7 @@ run-esp: esp
 # J3.5/J4.2 : desk.elf est charge depuis l'initrd ; le bureau userland
 # ecrit son cadre de fenetre puis se termine.
 test: iso
-	@printf 'hello.elf\n' > /tmp/xili-shell-in.txt
-	@timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot < /tmp/xili-shell-in.txt > $(LOG) 2>&1 || true
+	@(sleep 6; printf 'hello.elf\n') | timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
 	@grep -q "J1: noyau charge" $(LOG) && grep -q "J2.3: tables de pages" $(LOG) \
 	  && grep -q "higher-half : OK" $(LOG) \
 	  && grep -q "J2.4: allocateur physique bitmap - OK" $(LOG) \
@@ -110,12 +109,12 @@ test: iso
 	  && grep -q "J2.7b: planificateur + GPR" $(LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(LOG) \
 	  && grep -q "J3.4: VFS + /dev pret" $(LOG) \
-	  && grep -q "J3.5: chargement de 'desk.elf' depuis l'initrd" $(LOG) \
-	  && grep -q "J4: bureau pret" $(LOG) \
+	  && grep -q "J3.5: chargement de 'shell.elf' depuis l'initrd" $(LOG) \
+	  && grep -q "J4: shell pret" $(LOG) \
 	  && grep -q "Hello from user program" $(LOG) \
 	  && grep "TH" $(LOG) >/dev/null \
 	  && ! grep -qi "panic" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + J4 bureau)" \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + shell/J4.1)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 test-net: iso

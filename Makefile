@@ -97,7 +97,7 @@ run-esp: esp
 # J3.5/J4.2 : desk.elf est charge depuis l'initrd ; le bureau userland
 # ecrit son cadre de fenetre puis se termine.
 test: iso
-	@(sleep 6; printf 'hello.elf\n'; sleep 2) | timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
+	@(sleep 8; printf 'hello.elf\n'; sleep 2) | timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
 	@# GRUB/QEMU avale les 2 premiers octets du flux serie au demarrage :
 	# les marqueurs du debut du boot perdent leurs 2 premiers caracteres
 	# (« J2.3: » arrive « 2.3: »). On normalise le log avant de tester.
@@ -132,7 +132,7 @@ test-net: iso
 # J4-A : sonde des nouveaux syscalls (lseek, getdents64, mprotect,
 # munmap, uname). Le shell lance le programme passe en variable PROBE.
 test-j4a: iso
-	@(sleep 6; printf '$(PROBE)\n'; sleep 2) | timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
+	@(sleep 8; printf '$(PROBE)\n'; sleep 2) | timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
 	@sed -i 's/^2\.3: tables de pages/J2.3: tables de pages/; s/^2\.4: allocateur/J2.4: allocateur/; s/^2\.5: IDT/J2.5: IDT/; s/^2\.5c: allocateur/J2.5c: allocateur/; s/^2\.6: PIC/J2.6: PIC/; s/^2\.6b: timer/J2.6b: timer/; s/^2\.7: planificateur/J2.7: planificateur/; s/^2\.7b: planificateur/J2.7b: planificateur/; s/^2\.8: scheduler/J2.8: scheduler/; s/^1: noyau charge/J1: noyau charge/' $(LOG)
 	@grep -q "J4: shell pret" $(LOG) \
 	  && grep -q "$(PROBE_MARKER)" $(LOG) \

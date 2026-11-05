@@ -1,6 +1,7 @@
 ; shell.s — shell utilisateur minimal XILI (J3/J4).
 ;
 ; Prompt -> lecture (tty, polling) -> execve d'un programme du initrd.
+; (Read non-bloquant : rend 0 octet si pas de donnees.)
 
 global _start
 section .text
@@ -22,7 +23,7 @@ shell_loop:
     mov rdi, 1
     mov rsi, buf
     mov rdx, r8
-    syscall             ; debug : renvoyer la ligne lue
+    syscall             ; echo la ligne lue
     test r8, r8
     jz shell_loop       ; len == 0 -> polling
     dec r8              ; tronquer le \n final

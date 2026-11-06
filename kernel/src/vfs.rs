@@ -23,6 +23,10 @@ pub enum FileType {
     Directory,
     Pipe,
     ProcFile,
+    Epoll,
+    EventFd,
+    SignalFd,
+    TimerFd,
 }
 
 #[derive(Clone, Copy)]
@@ -116,7 +120,9 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
     }
 
     // 2. /dev : inodes devices directs (pas de table CharDev/FileOps).
-    match path {
+    // Le chemin peut être "dev/null" (absolu) ou "null" (relatif).
+    let dev_name: &[u8] = if path.starts_with(b"dev/") { &path[4..] } else { path };
+    match dev_name {
         b"null" => {
             return Some(Inode {
                 file_type: FileType::CharDev,
@@ -148,6 +154,15 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
                 data: core::ptr::null(),
                 size: 0,
             });
+        }
+        b"urandom" => {
+            return Some(Inode { file_type: FileType::CharDev, minor: 9, data: core::ptr::null(), size: 0 });
+        }
+        b"ptmx" | b"console" => {
+            return Some(Inode { file_type: FileType::CharDev, minor: 4, data: core::ptr::null(), size: 0 });
+        }
+        b"pts" | b"pts/0" => {
+            return Some(Inode { file_type: FileType::CharDev, minor: 4, data: core::ptr::null(), size: 0 });
         }
         _ => {}
     }
@@ -184,6 +199,15 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
             }
             b"meminfo" => {
                 return Some(new_proc_file("/proc/meminfo", proc_meminfo_read));
+            }
+            b"self/stat" => {
+                return Some(new_proc_file("/proc/self/stat", proc_self_stat_read));
+            }
+            b"self/status" => {
+                return Some(new_proc_file("/proc/self/status", proc_self_status_read));
+            }
+            b"self/cmdline" => {
+                return Some(new_proc_file("/proc/self/cmdline", proc_self_cmdline_read));
             }
             _ => {}
         }
@@ -346,6 +370,56 @@ fn proc_meminfo_read(_buf: *const u8, count: usize, _pos: usize, _fd: *const Fil
     n
 }
 
+// --- /proc/self/{stat,status,cmdline} (J4-D) ---
+// Le pid/exe sont lus via syscall (source de vérité CURRENT_PID/EXE).
+fn proc_self_stat_read(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    // Format stat(5) : pid (comm) state ppid pgrp session tty_nr tpgid flags ...
+    let pid = crate::syscall::current_pid();
+    let exe = crate::syscall::current_exe_name();
+    let mut line = [0u8; 256];
+    let mut n = 0usize;
+    let put = |line: &mut [u8], n: &mut usize, s: &[u8]| {
+        for &b in s { if *n < line.len() { line[*n] = b; *n += 1; } }
+    };
+    // pid + " (" + exe + ") R 0 0 0 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+    let mut num = [0u8; 20]; let mut ni = 0usize; let mut v = pid;
+    if v == 0 { num[ni] = b'0'; ni += 1; } else { let mut tmp = [0u8; 20]; let mut ti = 0; while v > 0 { tmp[ti] = b'0' + (v % 10) as u8; v /= 10; ti += 1; } while ti > 0 { ti -= 1; num[ni] = tmp[ti]; ni += 1; } }
+    put(&mut line, &mut n, &num[..ni]);
+    put(&mut line, &mut n, b" (");
+    put(&mut line, &mut n, &exe);
+    put(&mut line, &mut n, b") R 0 0 0 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
+    let m = min(count, n);
+    for i in 0..m { unsafe { core::ptr::write_volatile((buf as *mut u8).add(i), line[i]) }; }
+    m
+}
+
+fn proc_self_status_read(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let pid = crate::syscall::current_pid();
+    let exe = crate::syscall::current_exe_name();
+    let mut line = [0u8; 512];
+    let mut n = 0usize;
+    let mut push = |line: &mut [u8], n: &mut usize, s: &[u8]| { for &b in s { if *n < line.len() { line[*n] = b; *n += 1; } } };
+    let mut num = [0u8; 20]; let mut ni = 0usize; let mut v = pid;
+    if v == 0 { num[ni] = b'0'; ni += 1; } else { let mut tmp = [0u8; 20]; let mut ti = 0; while v > 0 { tmp[ti] = b'0' + (v % 10) as u8; v /= 10; ti += 1; } while ti > 0 { ti -= 1; num[ni] = tmp[ti]; ni += 1; } }
+    push(&mut line, &mut n, b"Name:\t"); push(&mut line, &mut n, &exe);
+    push(&mut line, &mut n, b"\nState:\tR (running)\nPid:\t"); push(&mut line, &mut n, &num[..ni]);
+    push(&mut line, &mut n, b"\nPPid:\t0\nVmSize:\t8192 kB\nVmRSS:\t8192 kB\n");
+    let m = min(count, n);
+    for i in 0..m { unsafe { core::ptr::write_volatile((buf as *mut u8).add(i), line[i]) }; }
+    m
+}
+
+fn proc_self_cmdline_read(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let exe = crate::syscall::current_exe_name();
+    let mut n = min(count, exe.len());
+    for i in 0..n { unsafe { core::ptr::write_volatile((buf as *mut u8).add(i), exe[i]) }; }
+    if n < count && n < exe.len() + 1 { /* cmdline se termine par NUL */ }
+    // NUL final si place
+    if n < count { unsafe { core::ptr::write_volatile((buf as *mut u8).add(n), 0) }; n += 1; }
+    n
+}
+
+
 /* ------------------------------------------------------------ *
  * Pipes anonymes (J4)
  * ------------------------------------------------------------ */
@@ -504,6 +578,148 @@ unsafe fn pipe_close(fd: usize) {
 }
 
 /* ------------------------------------------------------------ *
+ * Objets d'attente (J4-D) : eventfd, signalfd, timerfd, epoll.
+ * ------------------------------------------------------------ */
+
+pub const MAX_EPOLL: usize = 8;
+pub const MAX_EVENTFD: usize = 16;
+pub const MAX_SIGNALFD: usize = 16;
+pub const MAX_TIMERFD: usize = 16;
+
+#[derive(Clone, Copy)]
+pub struct EpollEntry { pub fd: usize, pub events: u32, pub data: u64, pub used: bool }
+#[derive(Clone, Copy)]
+pub struct Epoll { pub entries: [EpollEntry; 16], pub count: usize }
+const EMPTY_EPOLL: Epoll = Epoll { entries: [EpollEntry { fd: 0, events: 0, data: 0, used: false }; 16], count: 0 };
+
+static mut EPOLLS: [Epoll; MAX_EPOLL] = [EMPTY_EPOLL; MAX_EPOLL];
+static mut EVENTFDS: [u64; MAX_EVENTFD] = [0; MAX_EVENTFD];
+static mut SIGNALFDS: [(u64, u32); MAX_SIGNALFD] = [(0, 0); MAX_SIGNALFD];
+#[derive(Clone, Copy)]
+pub struct TimerFd { pub expiry: u64, pub interval: u64, pub expirations: u64 }
+static mut TIMERFDS: [TimerFd; MAX_TIMERFD] = [TimerFd { expiry: 0, interval: 0, expirations: 0 }; MAX_TIMERFD];
+
+unsafe fn alloc_fd(inode: Inode) -> Option<usize> {
+    for i in 3..MAX_FILES {
+        if OPEN_FILES[i].is_none() {
+            OPEN_FILES[i] = Some(FileDesc { inode, pos: 0 });
+            return Some(i);
+        }
+    }
+    None
+}
+
+pub unsafe fn epoll_create() -> Option<usize> {
+    for i in 0..MAX_EPOLL {
+        if EPOLLS[i].count == 0 && OPEN_FILES.iter().all(|f| f.is_none() || f.as_ref().unwrap().inode.file_type != FileType::Epoll || f.as_ref().unwrap().inode.minor as usize != i) {
+            EPOLLS[i] = EMPTY_EPOLL;
+            return alloc_fd(Inode { file_type: FileType::Epoll, minor: i as u32, data: core::ptr::null(), size: 0 });
+        }
+    }
+    None
+}
+pub unsafe fn eventfd_create() -> Option<usize> {
+    for i in 0..MAX_EVENTFD {
+        let used = OPEN_FILES.iter().any(|f| matches!(f, Some(fd) if fd.inode.file_type == FileType::EventFd && fd.inode.minor as usize == i));
+        if !used { EVENTFDS[i] = 0; return alloc_fd(Inode { file_type: FileType::EventFd, minor: i as u32, data: core::ptr::null(), size: 0 }); }
+    }
+    None
+}
+pub unsafe fn signalfd_create(mask: u64) -> Option<usize> {
+    for i in 0..MAX_SIGNALFD {
+        let used = OPEN_FILES.iter().any(|f| matches!(f, Some(fd) if fd.inode.file_type == FileType::SignalFd && fd.inode.minor as usize == i));
+        if !used { SIGNALFDS[i] = (mask, 0); return alloc_fd(Inode { file_type: FileType::SignalFd, minor: i as u32, data: core::ptr::null(), size: 0 }); }
+    }
+    None
+}
+pub unsafe fn timerfd_create() -> Option<usize> {
+    for i in 0..MAX_TIMERFD {
+        let used = OPEN_FILES.iter().any(|f| matches!(f, Some(fd) if fd.inode.file_type == FileType::TimerFd && fd.inode.minor as usize == i));
+        if !used { TIMERFDS[i] = TimerFd { expiry: 0, interval: 0, expirations: 0 }; return alloc_fd(Inode { file_type: FileType::TimerFd, minor: i as u32, data: core::ptr::null(), size: 0 }); }
+    }
+    None
+}
+
+pub unsafe fn epoll_ctl(epfd: usize, op: u32, fd: usize, events: u32, data: u64) -> i64 {
+    if epfd >= MAX_FILES { return -9; }
+    let ep = match OPEN_FILES[epfd] { Some(ref f) if f.inode.file_type == FileType::Epoll => f.inode.minor as usize, _ => return -9 };
+    if fd >= MAX_FILES || OPEN_FILES[fd].is_none() { return -9; }
+    let e = &mut EPOLLS[ep];
+    match op {
+        1 => { // ADD
+            for en in e.entries.iter_mut() { if !en.used { en.fd = fd; en.events = events; en.data = data; en.used = true; e.count += 1; return 0; } }
+            -28
+        }
+        2 => { // DEL
+            for en in e.entries.iter_mut() { if en.used && en.fd == fd { en.used = false; e.count -= 1; return 0; } }
+            -2
+        }
+        3 => { // MOD
+            for en in e.entries.iter_mut() { if en.used && en.fd == fd { en.events = events; en.data = data; return 0; } }
+            -2
+        }
+        _ => -22,
+    }
+}
+
+pub unsafe fn fd_ready(fd: usize) -> bool {
+    if fd >= MAX_FILES { return false; }
+    let f = match OPEN_FILES[fd] { Some(ref f) => f, None => return false };
+    match f.inode.file_type {
+        FileType::EventFd => EVENTFDS[f.inode.minor as usize] != 0,
+        FileType::SignalFd => SIGNALFDS[f.inode.minor as usize].1 != 0,
+        FileType::TimerFd => {
+            let tf = TIMERFDS[f.inode.minor as usize];
+            tf.expiry != 0 && crate::syscall::ko_ticks() >= tf.expiry
+        }
+        FileType::Pipe => match PIPES.get(f.inode.minor as usize) { Some(Some(pp)) => pp.len > 0, _ => false },
+        FileType::Regular | FileType::CharDev | FileType::ProcFile => true,
+        _ => false,
+    }
+}
+
+/// Lit les événements prêts d'un epoll fd vers `buf` (12 o chacun),
+/// renvoie le nombre d'événements (0 si aucun).
+pub unsafe fn epoll_wait(epfd: usize, buf: *mut u8, maxevents: usize) -> usize {
+    if epfd >= MAX_FILES { return 0; }
+    let ep_idx = match OPEN_FILES[epfd] { Some(ref f) if f.inode.file_type == FileType::Epoll => f.inode.minor as usize, _ => return 0 };
+    let mut n = 0usize;
+    // Copie des entrées (évite l'emprunt pendant fd_ready).
+    let entries = EPOLLS[ep_idx].entries;
+    for en in entries.iter() {
+        if n >= maxevents { break; }
+        if en.used && fd_ready(en.fd) {
+            let dst = buf.add(n * 12);
+            core::ptr::write_unaligned(dst as *mut u32, en.events);
+            core::ptr::write_unaligned(dst.add(4) as *mut u64, en.data);
+            n += 1;
+        }
+    }
+    n
+}
+
+pub unsafe fn timerfd_settime(fd: usize, value_ticks: u64, interval_ticks: u64) {
+    if fd >= MAX_FILES { return; }
+    if let Some(ref f) = OPEN_FILES[fd] {
+        if f.inode.file_type == FileType::TimerFd {
+            let i = f.inode.minor as usize;
+            if value_ticks == 0 { TIMERFDS[i].expiry = 0; }
+            else { TIMERFDS[i].expiry = crate::syscall::ko_ticks() + value_ticks; }
+            TIMERFDS[i].interval = interval_ticks;
+            TIMERFDS[i].expirations = 0;
+        }
+    }
+}
+
+pub unsafe fn signalfd_notify(sig: u64) {
+    for i in 0..MAX_SIGNALFD {
+        if SIGNALFDS[i].0 & (1u64 << (sig % 64)) != 0 && SIGNALFDS[i].1 == 0 {
+            SIGNALFDS[i].1 = sig as u32;
+        }
+    }
+}
+
+/* ------------------------------------------------------------ *
  * Devices : read/write implémentés directement ici.
  * ------------------------------------------------------------ */
 
@@ -580,6 +796,7 @@ fn char_dev_read(
         4 => dev_tty_read(buf, count, pos, _fd),
         5 => dev_zero_read(buf, count, pos, _fd),
         8 => dev_random_read(buf, count, pos, _fd),
+        9 => dev_random_read(buf, count, pos, _fd),
         _ => 0,
     }
 }
@@ -641,6 +858,10 @@ pub unsafe fn close(fd: usize) {
     };
     match file.inode.file_type {
         FileType::Pipe => pipe_close(fd),
+        FileType::EventFd => { EVENTFDS[file.inode.minor as usize] = 0; }
+        FileType::SignalFd => { SIGNALFDS[file.inode.minor as usize] = (0, 0); }
+        FileType::TimerFd => { TIMERFDS[file.inode.minor as usize] = TimerFd { expiry: 0, interval: 0, expirations: 0 }; }
+        FileType::Epoll => { EPOLLS[file.inode.minor as usize] = EMPTY_EPOLL; }
         _ => {}
     }
     OPEN_FILES[fd] = None;
@@ -733,6 +954,44 @@ pub unsafe fn read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> 
         }
         FileType::Directory => Err(-21),
         FileType::Pipe => unsafe { pipe_read(fd, buf, count) },
+        FileType::EventFd => {
+            if count < 8 { return Err(-22); }
+            let i = file.inode.minor as usize;
+            let v = EVENTFDS[i];
+            EVENTFDS[i] = 0;
+            unsafe { core::ptr::write_unaligned(buf as *mut u64, v) };
+            Ok(8)
+        }
+        FileType::SignalFd => {
+            if count < 128 { return Err(-22); }
+            let i = file.inode.minor as usize;
+            let sig = SIGNALFDS[i].1;
+            if sig == 0 { return Ok(0); }
+            SIGNALFDS[i].1 = 0;
+            unsafe {
+                core::ptr::write_bytes(buf, 0, 128);
+                core::ptr::write_unaligned(buf as *mut u32, sig);
+            }
+            Ok(128)
+        }
+        FileType::TimerFd => {
+            if count < 8 { return Err(-22); }
+            let i = file.inode.minor as usize;
+            let mut tf = TIMERFDS[i];
+            if tf.expiry == 0 || crate::syscall::ko_ticks() < tf.expiry { return Ok(0); }
+            // Expirations écoulées (au moins 1).
+            let now = crate::syscall::ko_ticks();
+            let mut exp = 0u64;
+            let mut expiry = tf.expiry;
+            if tf.interval == 0 { exp = 1; expiry = 0; }
+            else {
+                while now >= expiry { exp += 1; expiry += tf.interval; }
+            }
+            TIMERFDS[i].expiry = expiry;
+            unsafe { core::ptr::write_unaligned(buf as *mut u64, exp) };
+            Ok(8)
+        }
+        FileType::Epoll => Err(-9),
     }
 }
 
@@ -760,6 +1019,14 @@ pub unsafe fn write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i6
         }
         FileType::Directory => Err(-21),
         FileType::Pipe => unsafe { pipe_write(fd, buf, count) },
+        FileType::EventFd => {
+            if count < 8 { return Err(-22); }
+            let i = file.inode.minor as usize;
+            let v = unsafe { core::ptr::read_unaligned(buf as *const u64) };
+            EVENTFDS[i] = EVENTFDS[i].wrapping_add(v);
+            Ok(8)
+        }
+        FileType::SignalFd | FileType::TimerFd | FileType::Epoll => Err(-9),
         FileType::ProcFile => Err(-30),
     }
 }

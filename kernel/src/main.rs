@@ -402,6 +402,7 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         console::print(format_args!("J5.1: virtio-net absent (QEMU sans -net ?)\n"));
     }
 
+    unsafe { crate::syscall::set_current_exe(b"shell.elf") };
     // Lance shell.elf depuis l'initrd (J3 final : premier shell utilisateur).
     run_initrd_elf("shell.elf", user_stack_top)
 }

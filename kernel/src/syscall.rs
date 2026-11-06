@@ -111,12 +111,24 @@ const SYS_KILL: u64 = 62;
 const SYS_TGKILL: u64 = 234;
 const SYS_GETRANDOM: u64 = 318;
 const SYS_MEMFD_CREATE: u64 = 319;
+const SYS_CLONE: u64 = 56;
+const SYS_EPOLL_WAIT: u64 = 232;
+const SYS_EPOLL_CTL: u64 = 233;
+const SYS_EPOLL_PWAIT: u64 = 281;
+const SYS_SIGNALFD: u64 = 282;
+const SYS_TIMERFD_CREATE: u64 = 283;
+const SYS_EVENTFD: u64 = 284;
+const SYS_SIGNALFD4: u64 = 289;
+const SYS_EVENTFD2: u64 = 290;
+const SYS_EPOLL_CREATE1: u64 = 291;
+const SYS_TIMERFD_SETTIME: u64 = 86;
+const SYS_TIMERFD_GETTIME: u64 = 87;
 
 /// Descripteurs fichiers — 3 emplacements réservés (stdin/stdout/stderr),
 /// fd 3+ réservés aux fichiers du VFS. La table vive est celle du VFS
 /// (`crate::vfs::OPEN_FILES`) : les syscalls l'utilisent en source de
 /// vérité (CR-1).
-const MAX_FD: usize = 8;
+const MAX_FD: usize = 64; // aligné sur VFS MAX_FILES (J4-D : eventfd/epoll/... consomment des fds)
 
 /// Fournit `bcmp` pour le linker. LLVM génère des appels à `bcmp` pour
 /// comparer des tranches `[u8]` ; dans un kernel no_std, l'implémentation
@@ -177,6 +189,14 @@ static mut TASK_STATE: [u8; task::MAX_TASKS] = [4; task::MAX_TASKS];
 /// Switch coopératif demandé par wait4/exit, appliqué par handle_syscall
 /// après l'écriture de RAX (usize::MAX = aucun).
 static mut PENDING_SWITCH: usize = usize::MAX;
+/// Ticks virtuels : incrémentés à chaque syscall (le timer IRQ ne
+/// s'exécute pas en ring3, IF=0). Sert de base temps à timerfd.
+static mut VTICKS: u64 = 0;
+pub fn ko_ticks() -> u64 {
+    let v = unsafe { VTICKS };
+    let r = crate::irq::ticks();
+    if v > r { v } else { r }
+}
 
 unsafe fn save_ctx(task_id: usize, pid: u64, gpr_ptr: u64) {
     if task_id >= task::MAX_TASKS {
@@ -218,6 +238,16 @@ static mut CURRENT_TASK_ID: usize = 0;
 #[link_section = ".data"]
 static mut CURRENT_PID: u64 = 1;
 static mut CURRENT_CWD: [u8; 64] = [0; 64];
+#[link_section = ".data"]
+static mut CURRENT_EXE: [u8; 64] = [0; 64];
+
+pub fn current_pid() -> u64 { unsafe { CURRENT_PID } }
+pub fn current_exe_name() -> [u8; 64] { unsafe { CURRENT_EXE } }
+pub unsafe fn set_current_exe(name: &[u8]) {
+    CURRENT_EXE = [0; 64];
+    let n = core::cmp::min(name.len(), 63);
+    core::ptr::copy_nonoverlapping(name.as_ptr(), CURRENT_EXE.as_mut_ptr(), n);
+}
 
 /// Tâche du processus userland courant (0 = noyau principal).
 ///
@@ -460,6 +490,7 @@ fn sys_execve(filename: u64, _argv: u64, _envp: u64) -> i64 {
         len
     ));
 
+    unsafe { set_current_exe(name_slice) };
     // 2. Charger le programme (et son interpréteur le cas échéant).
     let (entry, stack_top) = match unsafe { load_from_initrd(name_slice, 0x100_0000) } {
         Some(v) => v,
@@ -1280,6 +1311,7 @@ fn sys_kill(pid: u64, sig: u64) -> i64 {
     }
     // Seul SIGKILL est réellement traité : le processus visé devient
     // zombie s'il est connu.
+    unsafe { crate::vfs::signalfd_notify(sig) };
     if sig == SIGKILL || sig == SIGTERM || sig == SIGINT {
         unsafe {
             for i in 0..PROCESSES.len() {
@@ -1405,6 +1437,108 @@ fn sys_exit(gpr_ptr: u64, code: u64) -> i64 {
         // W3 : RFLAGS utilisateur = 0 (IF=0) — le bit 1 (TF) n'est pas un
         // masque d'interruption.
         set_gpr(gpr_ptr, SYS_R11, 0x0);
+    }
+    0
+}
+
+
+/* ------------------------------------------------------------ *
+ * J4-D : clone, epoll, eventfd, signalfd, timerfd
+ * ------------------------------------------------------------ */
+
+/// sys_clone(flags, stack, parent_tid, tls, child_tid)
+/// `CLONE_THREAD` (0x10000) non supporté (-ENOSYS) ; le reste = fork.
+fn sys_clone(gpr_ptr: u64, flags: u64, _stack: u64, _ptid: u64, _tls: u64, _ctid: u64) -> i64 {
+    if flags & 0x0001_0000 != 0 {
+        return -38; // -ENOSYS : threads non supportés à ce stade
+    }
+    sys_fork(gpr_ptr)
+}
+
+fn sys_epoll_create1(_flags: u64) -> i64 {
+    match unsafe { crate::vfs::epoll_create() } {
+        Some(fd) => fd as i64,
+        None => -24, // -EMFILE
+    }
+}
+
+fn sys_epoll_ctl(epfd: u64, op: u64, fd: u64, event_ptr: u64) -> i64 {
+    if event_ptr == 0 && op != 2 {
+        return -14;
+    }
+    let (events, data) = if event_ptr != 0 {
+        unsafe {
+            let ev = core::ptr::read_unaligned(event_ptr as *const u32);
+            let d = core::ptr::read_unaligned((event_ptr + 4) as *const u64);
+            (ev, d)
+        }
+    } else { (0, 0) };
+    unsafe { crate::vfs::epoll_ctl(epfd as usize, op as u32, fd as usize, events, data) }
+}
+
+fn sys_epoll_wait(epfd: u64, events_ptr: u64, maxevents: u64, _timeout: i64) -> i64 {
+    if events_ptr == 0 || maxevents == 0 || maxevents > 1024 {
+        return -22;
+    }
+    // Copie locale (12 o max par événement, 32 max ici) puis vers user.
+    let mut tmp = [0u8; 12 * 32];
+    let n = unsafe { crate::vfs::epoll_wait(epfd as usize, tmp.as_mut_ptr(), core::cmp::min(maxevents as usize, 32)) };
+    if n > 0 {
+        unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), events_ptr as *mut u8, n * 12) };
+    }
+    n as i64
+}
+
+fn sys_eventfd(init: u64, _flags: u64) -> i64 {
+    match unsafe { crate::vfs::eventfd_create() } {
+        Some(fd) => {
+            if init != 0 {
+                let buf = [0u8; 8];
+                let _ = unsafe { crate::vfs::write(fd, buf.as_ptr(), 8) };
+                let b = init.to_ne_bytes();
+                let _ = unsafe { crate::vfs::write(fd, b.as_ptr(), 8) };
+            }
+            fd as i64
+        }
+        None => -24,
+    }
+}
+
+fn sys_signalfd(fd: u64, mask_ptr: u64, _sigsetsize: u64) -> i64 {
+    if fd != u64::MAX && mask_ptr == 0 {
+        return -22;
+    }
+    // mask_ptr pointe sur 8 octets (sigset_t minimal) ; fd==-1 = création.
+    if fd == u64::MAX {
+        let mask = if mask_ptr != 0 { unsafe { core::ptr::read_unaligned(mask_ptr as *const u64) } } else { 0 };
+        match unsafe { crate::vfs::signalfd_create(mask) } {
+            Some(nfd) => nfd as i64,
+            None => -24,
+        }
+    } else {
+        // fd fourni : on ne supporte pas la mise à jour de masque.
+        -22
+    }
+}
+
+fn sys_timerfd_create(_clockid: u64, _flags: u64) -> i64 {
+    match unsafe { crate::vfs::timerfd_create() } {
+        Some(fd) => fd as i64,
+        None => -24,
+    }
+}
+
+fn sys_timerfd_settime(fd: u64, _flags: u64, new_value: u64, _old_value: u64) -> i64 {
+    if new_value == 0 { return -14; }
+    if !user_buf_ok(new_value, 32) { return -14; }
+    unsafe {
+        let v_sec = core::ptr::read_unaligned(new_value as *const u64);
+        let v_nsec = core::ptr::read_unaligned((new_value + 8) as *const u64);
+        let i_sec = core::ptr::read_unaligned((new_value + 16) as *const u64);
+        let i_nsec = core::ptr::read_unaligned((new_value + 24) as *const u64);
+        let vt = v_sec * 100 + (v_nsec + 10_000_000) / 10_000_000;
+        let it = i_sec * 100 + (i_nsec + 10_000_000) / 10_000_000;
+        crate::vfs::timerfd_settime(fd as usize, vt, it);
     }
     0
 }
@@ -1552,6 +1686,7 @@ fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 
                     crate::vfs::FileType::Directory => 0x41ED, // S_IFDIR | 0755
                     crate::vfs::FileType::Pipe => 0x81A4,      // S_IFIFO | 0644
                     crate::vfs::FileType::ProcFile => 0x81A4,  // S_IFIFO | 0644
+                    _ => 0x81A4,
                 };
                 core::ptr::write_volatile((statbuf + 16) as *mut u32, mode);
                 core::ptr::write_volatile((statbuf + 40) as *mut u64, inode.size as u64);
@@ -1585,6 +1720,7 @@ fn sys_newfstatat(_dirfd: i64, pathname: u64, statbuf: u64, _flags: u64) -> i64 
 /// puis retourne en anneau 3.
 #[no_mangle]
 pub extern "C" fn handle_syscall(gpr_ptr: u64) {
+    unsafe { VTICKS += 1; }
     let nr = unsafe { gpr(gpr_ptr, SYS_RAX) } as u64;
     let arg1 = unsafe { gpr(gpr_ptr, SYS_RDI) } as u64;
     let arg2 = unsafe { gpr(gpr_ptr, SYS_RSI) } as u64;
@@ -1617,6 +1753,18 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_MMAP => sys_mmap(arg1, arg2, arg3, arg4, arg5 as i64, arg6),
         SYS_NEWFSTATAT => sys_newfstatat(arg1 as i64, arg2, arg3, arg4),
         SYS_FORK => sys_fork(gpr_ptr),
+        SYS_CLONE => sys_clone(gpr_ptr, arg1, arg2, arg3, arg4, arg5),
+        SYS_EPOLL_CREATE1 => sys_epoll_create1(arg1),
+        SYS_EPOLL_CTL => sys_epoll_ctl(arg1, arg2, arg3, arg4),
+        SYS_EPOLL_WAIT => sys_epoll_wait(arg1, arg2, arg3, arg4 as i64),
+        SYS_EPOLL_PWAIT => sys_epoll_wait(arg1, arg2, arg3, arg4 as i64),
+        SYS_EVENTFD => sys_eventfd(arg1, arg2),
+        SYS_EVENTFD2 => sys_eventfd(arg1, arg2),
+        SYS_SIGNALFD => sys_signalfd(arg1, arg2, arg3),
+        SYS_SIGNALFD4 => sys_signalfd(arg1, arg2, arg3),
+        SYS_TIMERFD_CREATE => sys_timerfd_create(arg1, arg2),
+        SYS_TIMERFD_SETTIME => sys_timerfd_settime(arg1, arg2, arg3, arg4),
+        SYS_TIMERFD_GETTIME => { if arg2 != 0 && user_buf_ok(arg2, 32) { unsafe { core::ptr::write_bytes(arg2 as *mut u8, 0, 32) }; } 0 },
         SYS_EXECVE => sys_execve(arg1, arg2, arg3),
         SYS_WAIT4 => sys_wait4(arg1 as i64, arg2, arg3),
         SYS_GETCWD => sys_getcwd(arg1 as u64, arg2 as u64),

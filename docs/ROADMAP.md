@@ -180,6 +180,16 @@ J1: noyau charge, mode long actif, console OK.
 - `/proc/self/maps` au format Linux réel.
 - Sonde : `make test-j4a PROBE=probe_j4b.elf PROBE_MARKER="probe_j4b: OK"`.
 
+**J4-D (2026-11-06) — attente, clone, /proc, /dev** ✅
+- `epoll_create1/ctl/wait/pwait`, `eventfd2`, `signalfd4`, `timerfd_*`
+  (objets VFS dédiés, ticks virtuels), `clone` (= fork sans THREAD).
+- `/proc/self/{stat,status,cmdline}`, exe réel, `/dev/{urandom,ptmx,
+  console,pts,pts/0}`, `MAX_FD` 8 -> 64.
+- Sonde : `make test-j4a PROBE=probe_j4d.elf PROBE_MARKER="probe_j4d: OK"`
+  (D1 eventfd+epoll, D2 timerfd, D3 signalfd, D4 clone, D5 proc, D6 rand).
+- Reste pour clôturer J4 : image Alpine + `apk` (réseau J5),
+  `SCM_RIGHTS`/`AF_UNIX`, `devpts` PTY, COW.
+
 **J4-C (2026-11-06) — fork coopératif** ✅
 - Switch au retour de syscall (pas par scheduler timer) : contexte GPR
   copié par processus (`CTXS`), `wait4` suspend le parent et charge

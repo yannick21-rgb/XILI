@@ -28,6 +28,25 @@ décisions prises.
 
 ---
 
+## 2026-11-06 — J4-D : epoll/eventfd/signalfd/timerfd + clone + /proc + /dev
+
+- Nouveaux objets VFS : `Epoll`, `EventFd`, `SignalFd`, `TimerFd`
+  (tables dédiées, dispatch read/write/close). `epoll_wait` renvoie les
+  fds prêts (eventfd>0, signal en attente, timer expiré, pipe non vide).
+- `timerfd` sur ticks virtuels (`VTICKS` incrémenté à chaque syscall :
+  le timer IRQ ne tourne pas en ring3, IF=0). Boucle d'expiration
+  corrigée (testait une copie périmée -> boucle infinie).
+- `clone` (= fork sans CLONE_THREAD), `signalfd` notifié par `kill`,
+  `/proc/self/{stat,status,cmdline}` (+ exe réel via `CURRENT_EXE`),
+  `/dev/{urandom,ptmx,console,pts,pts/0}` (lookup `dev/` corrigé).
+- `MAX_FD` 8 -> 64 (aligné VFS : les objets J4-D consomment des fds).
+- Sonde `tools/probe_j4d.s` : D1 eventfd+epoll, D2 timerfd, D3 signalfd,
+  D4 clone, D5 proc stat, D6 urandom -> `probe_j4d: OK`.
+- Validation : `make test` OK, J4-A/B OK, fork F1/F2/F3 OK, fork2 P1/P2/P3 OK.
+- Reste (hors noyau) : image Alpine + `apk` (réseau J5), `SCM_RIGHTS`/
+  `AF_UNIX` complet, `devpts` PTY réel, COW mémoire après fork.
+
+---
 ## 2026-11-06 — J4-C : fork — RÉSOLU (switch coopératif au syscall)
 
 > État : **J4-C résolu le 2026-11-06**. `probe_fork` affiche

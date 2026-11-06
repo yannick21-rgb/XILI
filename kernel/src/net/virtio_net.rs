@@ -24,22 +24,30 @@ const PCI_BAR0: u8 = 0x10;
 const PCI_COMMAND: u8 = 0x04;
 
 const VIRTIO_MAGIC: u32 = 0x7472_6976; // "virt"
-const VIRTIO_VERSION: u32 = 0x1;
 const VIRTIO_DEVICE_ID_NET: u32 = 0x1;
 
 const VIRTIO_OFF_MAGIC: usize = 0x000;
 const VIRTIO_OFF_VERSION: usize = 0x004;
 const VIRTIO_OFF_DEVICE_ID: usize = 0x008;
-const VIRTIO_OFF_GUEST_FEATURES: usize = 0x020;
+const VIRTIO_OFF_DEVICE_FEATURES: usize = 0x010;
+const VIRTIO_OFF_DEVICE_FEATURES_SEL: usize = 0x014;
+const VIRTIO_OFF_DRIVER_FEATURES: usize = 0x020;
+const VIRTIO_OFF_DRIVER_FEATURES_SEL: usize = 0x024;
 const VIRTIO_OFF_QUEUE_SEL: usize = 0x030;
-const VIRTIO_OFF_QUEUE_NUM: usize = 0x034;
-const VIRTIO_OFF_QUEUE_PFN: usize = 0x038;
+const VIRTIO_OFF_QUEUE_NUM_MAX: usize = 0x034;
+const VIRTIO_OFF_QUEUE_NUM: usize = 0x038;
+const VIRTIO_OFF_QUEUE_READY: usize = 0x044;
+const VIRTIO_OFF_QUEUE_NOTIFY: usize = 0x050;
 const VIRTIO_OFF_STATUS: usize = 0x070;
 
 const VIRTIO_STATUS_ACK: u32 = 1;
 const VIRTIO_STATUS_DRIVER: u32 = 2;
 const VIRTIO_STATUS_FEATURES_OK: u32 = 8;
 const VIRTIO_STATUS_DRIVER_OK: u32 = 4;
+
+// Feature bits (mode moderne)
+const VIRTIO_F_VERSION_1: u64 = 1 << 32;
+const VIRTIO_NET_F_MAC: u64 = 1 << 5;
 
 // ---------------------------------------------------------------------------
 // Virtqueue (format legacy)
@@ -87,6 +95,7 @@ struct Virtq {
     used: *mut VirtqUsed,
     next: u16,
     last_used: u16,
+    phys: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +113,7 @@ static mut RXQ: Virtq = Virtq {
     used: core::ptr::null_mut(),
     next: 0,
     last_used: 0,
+    phys: 0,
 };
 
 static mut TXQ: Virtq = Virtq {
@@ -112,6 +122,7 @@ static mut TXQ: Virtq = Virtq {
     used: core::ptr::null_mut(),
     next: 0,
     last_used: 0,
+    phys: 0,
 };
 
 static mut RX_COUNT: u64 = 0;
@@ -206,6 +217,23 @@ unsafe fn virtio_write(base: u32, off: usize, val: u32) {
     }
 }
 
+/// Lit un mot de 64 bits de features (2 registres de 32 bits).
+unsafe fn virtio_features(base: u32) -> u64 {
+    virtio_write(base, VIRTIO_OFF_DEVICE_FEATURES_SEL, 0);
+    let lo = virtio_read(base, VIRTIO_OFF_DEVICE_FEATURES) as u64;
+    virtio_write(base, VIRTIO_OFF_DEVICE_FEATURES_SEL, 1);
+    let hi = virtio_read(base, VIRTIO_OFF_DEVICE_FEATURES) as u64;
+    lo | (hi << 32)
+}
+
+/// Écrit un mot de 64 bits de features du driver.
+unsafe fn virtio_driver_features(base: u32, features: u64) {
+    virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES_SEL, 0);
+    virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES, features as u32);
+    virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES_SEL, 1);
+    virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES, (features >> 32) as u32);
+}
+
 unsafe fn virtq_init(base: u32, idx: u16, q: *mut Virtq) {
     let page = alloc_page().expect("virtio_net: alloc_page");
     let va = page as u64;
@@ -216,14 +244,35 @@ unsafe fn virtq_init(base: u32, idx: u16, q: *mut Virtq) {
     let used = (va + (VIRTQ_DESC_SIZE + VIRTQ_AVAIL_SIZE) as u64) as *mut VirtqUsed;
 
     virtio_write(base, VIRTIO_OFF_QUEUE_SEL, idx as u32);
+    let num_max = virtio_read(base, VIRTIO_OFF_QUEUE_NUM_MAX);
+    if num_max < VIRTQ_NUM as u32 {
+        crate::console::print(format_args!(
+            "virtio-net: queue {} num_max {} < {}\n",
+            idx, num_max, VIRTQ_NUM
+        ));
+    }
     virtio_write(base, VIRTIO_OFF_QUEUE_NUM, VIRTQ_NUM as u32);
-    virtio_write(base, VIRTIO_OFF_QUEUE_PFN, (va >> 12) as u32);
+
+    // Adresses physiques des structures (mode moderne).
+    let desc_pa = va;
+    let avail_pa = va + VIRTQ_DESC_SIZE as u64;
+    let used_pa = va + (VIRTQ_DESC_SIZE + VIRTQ_AVAIL_SIZE) as u64;
+    virtio_write(base, 0x060, desc_pa as u32);
+    virtio_write(base, 0x064, (desc_pa >> 32) as u32);
+    virtio_write(base, 0x068, avail_pa as u32);
+    virtio_write(base, 0x06C, (avail_pa >> 32) as u32);
+    virtio_write(base, 0x070, used_pa as u32);
+    virtio_write(base, 0x074, (used_pa >> 32) as u32);
+
+    // Activer la queue.
+    virtio_write(base, VIRTIO_OFF_QUEUE_READY, 1);
 
     (*q).desc = desc;
     (*q).avail = avail;
     (*q).used = used;
     (*q).next = 0;
     (*q).last_used = 0;
+    (*q).phys = va;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,30 +317,18 @@ pub unsafe fn init() -> bool {
     // Sans le bit 0 du command register, les accès ports I/O sont ignorés.
     let cmd = pci_read_config(bus, slot, func, PCI_COMMAND);
     pci_write_config(bus, slot, func, PCI_COMMAND, cmd | 0x05);
-    let cmd_after = pci_read_config(bus, slot, func, PCI_COMMAND);
-    crate::console::print(format_args!(
-        "virtio-net: cmd 0x{:x} -> 0x{:x}\n",
-        cmd, cmd_after
-    ));
 
-    // Lire tous les BARs : le registre virtio moderne est dans le BAR1
-    // (MMIO, 0xfeb91000). Le magic est à l'offset 0x000.
+    // Le registre virtio est dans le BAR4 (MMIO, 0xfe00000c → base 0xfe000000).
+    // C'est le registre moderne : le magic est à l'offset 0x000.
     let mut mmio_base: u32 = 0;
     for i in 0..6u8 {
         let bar = pci_read_config(bus, slot, func, PCI_BAR0 + i * 4);
-        crate::console::print(format_args!(
-            "virtio-net: BAR{} = 0x{:08x}\n",
-            i, bar
-        ));
-        if bar != 0 && bar & 1 == 0 && mmio_base == 0 {
+        if bar != 0 && bar & 1 == 0 {
             mmio_base = bar & 0xFFFF_FFF0;
         }
     }
     if mmio_base != 0 {
         // Mapper le BAR MMIO : 16 pages (64 Kio) couvrent les registres.
-        // Le BAR est à une adresse physique > 4 Gio ; on le mappe à la
-        // même adresse virtuelle (identity map) car le noyau est en
-        // higher-half et l'identity map couvre 0..1 Gio.
         for i in 0..16u64 {
             let vaddr = mmio_base as u64 + i * 0x1000;
             let pa = mmio_base as u64 + i * 0x1000;
@@ -316,23 +353,35 @@ pub unsafe fn init() -> bool {
     let version = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_VERSION);
     let device_id = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_DEVICE_ID);
 
-    if magic != VIRTIO_MAGIC || version != VIRTIO_VERSION || device_id != VIRTIO_DEVICE_ID_NET {
+    if magic != VIRTIO_MAGIC || device_id != VIRTIO_DEVICE_ID_NET {
         crate::console::print(format_args!(
-            "virtio-net: rejet magic=0x{:x} ver={} dev={}\n",
-            magic, version, device_id
+            "virtio-net: rejet magic=0x{:x} dev={}\n",
+            magic, device_id
         ));
         return false;
     }
 
-    // Séquence de démarrage virtio legacy.
-    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_STATUS, 0);
-    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER);
-    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_GUEST_FEATURES, 0);
+    // Négociation de features (mode moderne).
+    let features = virtio_features(VIRTIO_NET_BASE);
+    crate::console::print(format_args!(
+        "virtio-net: device_features=0x{:x}\n",
+        features
+    ));
+    let wanted = VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC;
+    virtio_driver_features(VIRTIO_NET_BASE, wanted);
     virtio_write(
         VIRTIO_NET_BASE,
         VIRTIO_OFF_STATUS,
         VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
+    let status = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_STATUS);
+    if status & VIRTIO_STATUS_FEATURES_OK == 0 {
+        crate::console::print(format_args!(
+            "virtio-net: FEATURES_OK refuse (status=0x{:x})\n",
+            status
+        ));
+        return false;
+    }
 
     virtq_init(VIRTIO_NET_BASE, 0, &mut RXQ);
     virtq_init(VIRTIO_NET_BASE, 1, &mut TXQ);
@@ -368,6 +417,8 @@ pub unsafe fn rx_init_buffers() {
         core::ptr::write_bytes(page as *mut u8, 0, 0x1000);
         rx_post(&mut RXQ, page as u64, 0x1000);
     }
+    // Notifier le device qu'il y a des descripteurs disponibles.
+    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_QUEUE_NOTIFY, 0);
     crate::console::print(format_args!("virtio-net: {} tampons RX postes\n", VIRTQ_NUM));
 }
 
@@ -397,6 +448,9 @@ pub unsafe fn send(data: &[u8]) -> usize {
     core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
     avail.idx = avail_idx.wrapping_add(1) as u16;
     TXQ.next = (TXQ.next + 1) % VIRTQ_NUM as u16;
+
+    // Notifier le device.
+    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_QUEUE_NOTIFY, 1);
 
     TX_COUNT += 1;
     n

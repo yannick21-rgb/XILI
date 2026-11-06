@@ -5,28 +5,28 @@ décisions prises.
 
 ---
 
-## 2026-11-06 — J5 : virtio-net — blocage sur l'accès aux registres
+## 2026-11-06 — J5 : virtio-net — mode moderne implémenté, blocage persiste
 
-> État : **J5 n'est pas terminé**. Le driver est réécrit (virtqueues
-> RX/TX, `send`/`recv`/`arp_probe`, handler IRQ) mais le device ne
-> répond pas : aucun BAR ne donne le magic virtio.
+> État : **J5 n'est pas terminé**. Le driver est passé en mode moderne
+> (négociation de features, virtqueues desc/avail/used, notifications)
+> mais le device ne répond toujours pas : aucun BAR ne donne le magic.
 
-- **Réécriture du driver** : `virtq_init` alloue une page pour
-  desc/avail/used, `rx_post` publie les descripteurs, `send` poste un
-  descripteur TX, `recv` consomme la ring used, `handle_irq` est branché
-  sur les IRQ non-timer, `arp_probe` émet un who-has et attend la réponse.
-- **Diagnostic** : le device est détecté (bus 0, slot 3, BAR0=0xc001
-  I/O, BAR1=0xfeb91000 MMIO, BAR4=0xfe00000c MMIO). Le command register
-  est activé (0x100103 → 0x100107). Mais aucun BAR ne donne le magic
-  `0x74726976` : BAR0 → bruit (0x79bf8064), BAR1 → 0, BAR4 → 0.
-- **Cause probable** : le device est en mode « moderne » (virtio 1.0),
-  où les registres legacy ne sont accessibles qu'après négociation de
-  features. Le mode legacy (PFN) n'est pas le bon chemin.
-- **Validation** : `make test` OK (délai pipe porté à 12 s — le PCI
-  scan du driver a ralenti le boot). `make test-net` en échec.
-- **Reste** : implémenter la négociation de features virtio 1.0
-  (device_features → driver_features → FEATURES_OK), puis utiliser les
-  registres modernes (queue_notify, queue_desc, etc.).
+- **Mode moderne** : `virtio_features` (device_features 64 bits),
+  `virtio_driver_features` (VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC),
+  vérification de `FEATURES_OK`, `virtq_init` enregistre desc/avail/used
+  aux adresses 0x060-0x074, `QUEUE_READY=1`, notifications via
+  `QUEUE_NOTIFY` (0x050) dans `rx_init_buffers` et `send`.
+- **Diagnostic** : le device est détecté (bus 0, slot 3). BAR0 = 0xc001
+  (I/O), BAR1 = 0xfeb91000 (MMIO), BAR4 = 0xfe00000c (MMIO). Le command
+  register est activé (0x100103 → 0x100107). Aucun BAR ne donne le magic
+  `0x74726976` : BAR0 → bruit (0xffffff64), BAR1 → 0, BAR4 → 0.
+- **Cause probable** : le registre virtio n'est pas dans un BAR standard,
+  ou le device exige une initialisation PCI plus complète (BAR sizing,
+  activation memory space avant lecture).
+- **Validation** : `make test` OK. `make test-net` en échec.
+- **Reste** : identifier le bon BAR (peut-être BAR1 avec activation
+  memory space), ou utiliser le PCI capability list pour trouver le
+  registre virtio.
 
 ---
 

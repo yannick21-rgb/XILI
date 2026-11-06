@@ -22,6 +22,26 @@ const PCI_CONFIG_DATA: u16 = 0xCFC;
 
 const PCI_BAR0: u8 = 0x10;
 const PCI_COMMAND: u8 = 0x04;
+const PCI_STATUS: u8 = 0x06;
+const PCI_CAPABILITY_LIST: u8 = 0x34;
+
+// Capability IDs
+const PCI_CAP_VENDOR: u8 = 0x09; // vendor-specific (virtio)
+
+// Structure capability virtio (PCI_CAP_VENDOR)
+// offset 0: cap_id (1), next (1), cap_len (2)
+// offset 4: cfg_type (1), bar (1), offset (4), length (4)
+const VIRTIO_CAP_CFG_TYPE: usize = 0x04;
+const VIRTIO_CAP_BAR: usize = 0x05;
+const VIRTIO_CAP_OFFSET: usize = 0x08;
+const VIRTIO_CAP_LENGTH: usize = 0x0C;
+
+// cfg_type values
+const VIRTIO_CAP_COMMON: u8 = 1;
+const VIRTIO_CAP_NOTIFY: u8 = 2;
+const VIRTIO_CAP_ISR: u8 = 3;
+const VIRTIO_CAP_DEVICE: u8 = 4;
+const VIRTIO_CAP_CFG: u8 = 5;
 
 const VIRTIO_MAGIC: u32 = 0x7472_6976; // "virt"
 const VIRTIO_DEVICE_ID_NET: u32 = 0x1;
@@ -140,6 +160,91 @@ unsafe fn pci_read_config(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
         | ((offset as u32) & 0xFC);
     outl(PCI_CONFIG_ADDRESS, address);
     inl(PCI_CONFIG_DATA)
+}
+
+unsafe fn pci_read_config_byte(bus: u8, slot: u8, func: u8, offset: u8) -> u8 {
+    let dword = pci_read_config(bus, slot, func, offset);
+    ((dword >> ((offset & 0x03) * 8)) & 0xFF) as u8
+}
+
+/// Parcourt la liste des capacités PCI et retourne les structures virtio.
+/// Retourne (common_base, common_off, notify_base, notify_off, device_base, device_off).
+unsafe fn pci_find_virtio_caps(
+    bus: u8,
+    slot: u8,
+    func: u8,
+) -> (u32, u32, u32, u32, u32, u32) {
+    let status = pci_read_config(bus, slot, func, PCI_STATUS) >> 16;
+    if status & 0x10 == 0 {
+        // bit 4 : capabilities list present
+        crate::console::print(format_args!("virtio-net: pas de capabilities\n"));
+        return (0, 0, 0, 0, 0, 0);
+    }
+
+    let mut cap_ptr = pci_read_config_byte(bus, slot, func, PCI_CAPABILITY_LIST);
+    let mut common_base = 0u32;
+    let mut common_off = 0u32;
+    let mut notify_base = 0u32;
+    let mut notify_off = 0u32;
+    let mut device_base = 0u32;
+    let mut device_off = 0u32;
+
+    while cap_ptr != 0 && cap_ptr != 0xFF {
+        let cap_id = pci_read_config_byte(bus, slot, func, cap_ptr);
+        let next = pci_read_config_byte(bus, slot, func, cap_ptr + 1);
+
+        if cap_id == PCI_CAP_VENDOR {
+            // Structure capability virtio
+            // offset 0: cap_id (1), next (1), cap_len (2)
+            // offset 4: cfg_type (1), bar (1), offset (4), length (4)
+            let cap_dword = pci_read_config(bus, slot, func, cap_ptr);
+            let cfg_type = ((cap_dword >> 24) & 0xFF) as u8;
+            let bar = ((cap_dword >> 16) & 0xFF) as u8;
+            let off = pci_read_config(bus, slot, func, cap_ptr + 8);
+            let len = pci_read_config(bus, slot, func, cap_ptr + 12);
+
+            let bar_val = pci_read_config(bus, slot, func, PCI_BAR0 + bar as u8 * 4);
+            // Le BAR peut être I/O (bit 0 = 1) ou MMIO (bit 0 = 0).
+            // Pour le mode moderne, on veut le BAR MMIO.
+            // Si le BAR est I/O, on prend le BAR1 (MMIO) à la place.
+            let base = if bar_val & 1 == 0 {
+                bar_val & 0xFFFF_FFF0
+            } else {
+                // BAR I/O : lire le BAR1 (MMIO) pour les registres modernes.
+                let bar1 = pci_read_config(bus, slot, func, PCI_BAR0 + 4);
+                if bar1 & 1 == 0 {
+                    bar1 & 0xFFFF_FFF0
+                } else {
+                    0
+                }
+            };
+
+            crate::console::print(format_args!(
+                "virtio-net: cap virtio type={} bar={} off=0x{:x} len=0x{:x} base=0x{:x}\n",
+                cfg_type, bar, off, len, base
+            ));
+
+            match cfg_type {
+                VIRTIO_CAP_COMMON => {
+                    common_base = base;
+                    common_off = off;
+                }
+                VIRTIO_CAP_NOTIFY => {
+                    notify_base = base;
+                    notify_off = off;
+                }
+                VIRTIO_CAP_DEVICE => {
+                    device_base = base;
+                    device_off = off;
+                }
+                _ => {}
+            }
+        }
+
+        cap_ptr = next;
+    }
+
+    (common_base, common_off, notify_base, notify_off, device_base, device_off)
 }
 
 unsafe fn pci_write_config(bus: u8, slot: u8, func: u8, offset: u8, value: u32) {
@@ -318,40 +423,30 @@ pub unsafe fn init() -> bool {
     let cmd = pci_read_config(bus, slot, func, PCI_COMMAND);
     pci_write_config(bus, slot, func, PCI_COMMAND, cmd | 0x05);
 
-    // Le registre virtio est dans le BAR4 (MMIO, 0xfe00000c → base 0xfe000000).
-    // C'est le registre moderne : le magic est à l'offset 0x000.
-    let mut mmio_base: u32 = 0;
-    for i in 0..6u8 {
-        let bar = pci_read_config(bus, slot, func, PCI_BAR0 + i * 4);
-        if bar != 0 && bar & 1 == 0 {
-            mmio_base = bar & 0xFFFF_FFF0;
-        }
-    }
-    if mmio_base != 0 {
-        // Mapper le BAR MMIO : 16 pages (64 Kio) couvrent les registres.
-        for i in 0..16u64 {
-            let vaddr = mmio_base as u64 + i * 0x1000;
-            let pa = mmio_base as u64 + i * 0x1000;
-            unsafe {
-                crate::mm::paging::map_page(
-                    vaddr,
-                    pa,
-                    crate::mm::paging::PRESENT | crate::mm::paging::WRITABLE,
-                );
-            }
-        }
-        VIRTIO_NET_BASE = mmio_base;
-        VIRTIO_NET_IS_IO = false;
+    // Lire les capacités PCI pour trouver le registre virtio.
+    let (common_base, common_off, notify_base, notify_off, device_base, device_off) =
+        pci_find_virtio_caps(bus, slot, func);
+
+    if common_base == 0 {
+        crate::console::print(format_args!("virtio-net: pas de cap common\n"));
+        return false;
     }
 
-    // Activer le périphérique : I/O space + bus master.
-    let cmd = pci_read_config(bus, slot, func, PCI_COMMAND);
-    pci_write_config(bus, slot, func, PCI_COMMAND, cmd | 0x05);
+    // Le registre virtio est dans le BAR0 (I/O-mapped, 0xc001).
+    // On force le mode I/O : les BARs MMIO (BAR1/BAR4) sont les registres
+    // modernes, inaccessibles sans négociation de features.
+    VIRTIO_NET_BASE = base;
+    VIRTIO_NET_IS_IO = (bar0 & 1) != 0;
 
     // Lire le magic APRÈS l'activation du command register.
     let magic = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_MAGIC);
     let version = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_VERSION);
     let device_id = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_DEVICE_ID);
+
+    crate::console::print(format_args!(
+        "virtio-net: common base=0x{:x} off=0x{:x} magic=0x{:x} ver={} dev={}\n",
+        common_base, common_off, magic, version, device_id
+    ));
 
     if magic != VIRTIO_MAGIC || device_id != VIRTIO_DEVICE_ID_NET {
         crate::console::print(format_args!(

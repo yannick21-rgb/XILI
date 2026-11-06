@@ -5,27 +5,25 @@ décisions prises.
 
 ---
 
-## 2026-11-06 — J5 : virtio-net — mode moderne implémenté, blocage persiste
+## 2026-11-06 — J5 : virtio-net — capacités PCI lues, blocage persiste
 
-> État : **J5 n'est pas terminé**. Le driver est passé en mode moderne
-> (négociation de features, virtqueues desc/avail/used, notifications)
-> mais le device ne répond toujours pas : aucun BAR ne donne le magic.
+> État : **J5 n'est pas terminé**. Le driver lit maintenant les capacités
+> PCI (common, notify, isr, device) et trouve le bon BAR, mais le magic
+> reste 0.
 
-- **Mode moderne** : `virtio_features` (device_features 64 bits),
-  `virtio_driver_features` (VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC),
-  vérification de `FEATURES_OK`, `virtq_init` enregistre desc/avail/used
-  aux adresses 0x060-0x074, `QUEUE_READY=1`, notifications via
-  `QUEUE_NOTIFY` (0x050) dans `rx_init_buffers` et `send`.
-- **Diagnostic** : le device est détecté (bus 0, slot 3). BAR0 = 0xc001
-  (I/O), BAR1 = 0xfeb91000 (MMIO), BAR4 = 0xfe00000c (MMIO). Le command
-  register est activé (0x100103 → 0x100107). Aucun BAR ne donne le magic
-  `0x74726976` : BAR0 → bruit (0xffffff64), BAR1 → 0, BAR4 → 0.
-- **Cause probable** : le registre virtio n'est pas dans un BAR standard,
-  ou le device exige une initialisation PCI plus complète (BAR sizing,
-  activation memory space avant lecture).
+- **Capacités PCI** : `pci_find_virtio_caps` parcourt la liste des
+  capacités (PCI_CAP_VENDOR = 0x09) et extrait common/notify/isr/device.
+  Résultat : common type=1 bar=16 off=0x0 len=0x1000 base=0xfeb91000,
+  notify type=2 off=0x3000, isr type=3 off=0x1000, device type=4 off=0x2000.
+- **Diagnostic** : le common est trouvé (base=0xfeb91000, off=0x0), mais
+  le magic reste 0, que le BAR soit mappé en identity map ou en
+  higher-half (0xFFFF_FFFF_8000_0000 + 0xfeb91000).
+- **Cause probable** : le BAR1 (0xfeb91000) n'est pas le bon BAR — c'est
+  le BAR0 (I/O, 0xc000) qui contient les registres legacy. Mais le BAR0
+  donne du bruit (0xffffff64). Le device n'est pas correctement initialisé.
 - **Validation** : `make test` OK. `make test-net` en échec.
-- **Reste** : identifier le bon BAR (peut-être BAR1 avec activation
-  memory space), ou utiliser le PCI capability list pour trouver le
+- **Reste** : identifier le bon BAR (peut-être BAR0 avec une initialisation
+  PCI plus complète), ou utiliser le PCI capability list pour trouver le
   registre virtio.
 
 ---

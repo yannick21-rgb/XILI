@@ -122,7 +122,7 @@ struct Virtq {
 // État global du driver
 // ---------------------------------------------------------------------------
 
-static mut VIRTIO_NET_BASE: u32 = 0;
+static mut VIRTIO_NET_BASE: u64 = 0;
 static mut VIRTIO_NET_IRQ: u8 = 0;
 static mut VIRTIO_NET_IS_IO: bool = false;
 static mut VIRTIO_NET_READY: bool = false;
@@ -298,32 +298,32 @@ unsafe fn pci_dump_all() {
 // Helpers virtio
 // ---------------------------------------------------------------------------
 
-unsafe fn virtio_read(base: u32, off: usize) -> u32 {
+unsafe fn virtio_read(base: u64, off: usize) -> u32 {
     if VIRTIO_NET_IS_IO {
         // Le registre virtio legacy est accessible en 8 bits.
-        let b0 = crate::io::inb((base + off as u32) as u16) as u32;
-        let b1 = crate::io::inb((base + off as u32 + 1) as u16) as u32;
-        let b2 = crate::io::inb((base + off as u32 + 2) as u16) as u32;
-        let b3 = crate::io::inb((base + off as u32 + 3) as u16) as u32;
+        let b0 = crate::io::inb((base + off as u64) as u16) as u32;
+        let b1 = crate::io::inb((base + off as u64 + 1) as u16) as u32;
+        let b2 = crate::io::inb((base + off as u64 + 2) as u16) as u32;
+        let b3 = crate::io::inb((base + off as u64 + 3) as u16) as u32;
         b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
     } else {
         core::ptr::read_volatile((base as *const u32).add(off / 4))
     }
 }
 
-unsafe fn virtio_write(base: u32, off: usize, val: u32) {
+unsafe fn virtio_write(base: u64, off: usize, val: u32) {
     if VIRTIO_NET_IS_IO {
-        crate::io::outb((base + off as u32) as u16, val as u8);
-        crate::io::outb((base + off as u32 + 1) as u16, (val >> 8) as u8);
-        crate::io::outb((base + off as u32 + 2) as u16, (val >> 16) as u8);
-        crate::io::outb((base + off as u32 + 3) as u16, (val >> 24) as u8);
+        crate::io::outb((base + off as u64) as u16, val as u8);
+        crate::io::outb((base + off as u64 + 1) as u16, (val >> 8) as u8);
+        crate::io::outb((base + off as u64 + 2) as u16, (val >> 16) as u8);
+        crate::io::outb((base + off as u64 + 3) as u16, (val >> 24) as u8);
     } else {
         core::ptr::write_volatile((base as *mut u32).add(off / 4), val);
     }
 }
 
 /// Lit un mot de 64 bits de features (2 registres de 32 bits).
-unsafe fn virtio_features(base: u32) -> u64 {
+unsafe fn virtio_features(base: u64) -> u64 {
     virtio_write(base, VIRTIO_OFF_DEVICE_FEATURES_SEL, 0);
     let lo = virtio_read(base, VIRTIO_OFF_DEVICE_FEATURES) as u64;
     virtio_write(base, VIRTIO_OFF_DEVICE_FEATURES_SEL, 1);
@@ -332,14 +332,14 @@ unsafe fn virtio_features(base: u32) -> u64 {
 }
 
 /// Écrit un mot de 64 bits de features du driver.
-unsafe fn virtio_driver_features(base: u32, features: u64) {
+unsafe fn virtio_driver_features(base: u64, features: u64) {
     virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES_SEL, 0);
     virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES, features as u32);
     virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES_SEL, 1);
     virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES, (features >> 32) as u32);
 }
 
-unsafe fn virtq_init(base: u32, idx: u16, q: *mut Virtq) {
+unsafe fn virtq_init(base: u64, idx: u16, q: *mut Virtq) {
     let page = alloc_page().expect("virtio_net: alloc_page");
     let va = page as u64;
     core::ptr::write_bytes(va as *mut u8, 0, 0x1000);
@@ -415,8 +415,6 @@ pub unsafe fn init() -> bool {
     };
 
     let base = bar0 & 0xFFFF_FFF0;
-    VIRTIO_NET_BASE = base;
-    VIRTIO_NET_IS_IO = (bar0 & 1) != 0;
 
     // Activer le périphérique AVANT les lectures : I/O space + bus master.
     // Sans le bit 0 du command register, les accès ports I/O sont ignorés.
@@ -432,11 +430,23 @@ pub unsafe fn init() -> bool {
         return false;
     }
 
-    // Le registre virtio est dans le BAR0 (I/O-mapped, 0xc001).
-    // On force le mode I/O : les BARs MMIO (BAR1/BAR4) sont les registres
-    // modernes, inaccessibles sans négociation de features.
-    VIRTIO_NET_BASE = base;
-    VIRTIO_NET_IS_IO = (bar0 & 1) != 0;
+    // Mapper le BAR de la capability common à une adresse virtuelle
+    // dans le higher-half du noyau (0xFFFF_FFFF_8000_0000 + offset).
+    // L'identity map ne couvre pas le BAR1 (0xfeb91000 > 1 Gio).
+    let vma = crate::mm::paging::HIGHER_HALF + common_base as u64;
+    for i in 0..16u64 {
+        let vaddr = vma + i * 0x1000;
+        let pa = common_base as u64 + i * 0x1000;
+        unsafe {
+            crate::mm::paging::map_page(
+                vaddr,
+                pa,
+                crate::mm::paging::PRESENT | crate::mm::paging::WRITABLE,
+            );
+        }
+    }
+    VIRTIO_NET_BASE = vma + common_off as u64;
+    VIRTIO_NET_IS_IO = false;
 
     // Lire le magic APRÈS l'activation du command register.
     let magic = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_MAGIC);

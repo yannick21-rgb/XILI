@@ -18,6 +18,8 @@ const ST_CLOSED: u8 = 0;
 const ST_SYN_SENT: u8 = 1;
 const ST_ESTABLISHED: u8 = 2;
 const ST_FIN_WAIT: u8 = 3;
+const ST_LISTEN: u8 = 10;
+const ST_SYN_RCVD: u8 = 11;
 
 struct Tcb {
     state: u8,
@@ -230,11 +232,19 @@ unsafe fn poll_incoming() {
     let payload_len = n.saturating_sub(payload_start);
 
     // Vérifier que c'est pour notre TCB.
-    if dst_port != TCB.src_port {
-        return;
-    }
-    if src_ip != TCB.dst_ip || src_port != TCB.dst_port {
-        return;
+    // En mode LISTEN, on accepte tout SYN vers notre port.
+    let is_listen = unsafe { TCB.state == ST_LISTEN };
+    if !is_listen {
+        if dst_port != TCB.src_port {
+            return;
+        }
+        if src_ip != TCB.dst_ip || src_port != TCB.dst_port {
+            return;
+        }
+    } else {
+        if dst_port != TCB.src_port {
+            return;
+        }
     }
 
     let syn = flags & 0x02 != 0;
@@ -243,6 +253,42 @@ unsafe fn poll_incoming() {
     let psh = flags & 0x08 != 0;
 
     match TCB.state {
+        ST_LISTEN => {
+            if syn && !ack {
+                // Nouvelle connexion.
+                TCB.dst_ip = src_ip;
+                TCB.dst_port = src_port;
+                TCB.ack = seq.wrapping_add(1);
+                TCB.seq = TCB.isn;
+                TCB.isn = TCB.isn.wrapping_add(0x1000);
+                // SYN-ACK
+                let dst_mac = match mac_for(TCB.dst_ip) {
+                    Some(m) => m,
+                    None => return,
+                };
+                let mut frame = [0u8; 128];
+                let flen = build_tcp_packet(
+                    &mut frame,
+                    dst_mac,
+                    SRC_IP,
+                    TCB.dst_ip,
+                    TCB.src_port,
+                    TCB.dst_port,
+                    TCB.seq,
+                    TCB.ack,
+                    0x12, // SYN+ACK
+                    &[],
+                );
+                virtio_net::send(&frame[..flen]);
+                TCB.seq = TCB.seq.wrapping_add(1);
+                TCB.state = ST_SYN_RCVD;
+            }
+        }
+        ST_SYN_RCVD => {
+            if ack && ackn == TCB.seq {
+                TCB.state = ST_ESTABLISHED;
+            }
+        }
         ST_SYN_SENT => {
             if syn && ack && ackn == TCB.seq.wrapping_add(1) {
                 TCB.ack = seq.wrapping_add(1);
@@ -448,6 +494,56 @@ pub unsafe fn tcp_recv(buf: &mut [u8]) -> usize {
     n
 }
 
+pub unsafe fn tcp_listen(port: u16) {
+    TCB.state = ST_CLOSED;
+    TCB.src_port = port;
+    TCB.dst_ip = [0; 4];
+    TCB.dst_port = 0;
+    TCB.seq = TCB.isn;
+    TCB.ack = 0;
+    TCB.rx_len = 0;
+    TCB.rx_head = 0;
+    TCB.state = ST_LISTEN;
+}
+
+pub unsafe fn tcp_server_self_test() {
+    crate::console::print(format_args!("J5.6: TCP server test begin\n"));
+    tcp_listen(8080);
+    crate::console::print(format_args!("J5.6: listening on port 8080\n"));
+
+    // Attendre une connexion (timeout ~10s).
+    let start = now_ticks();
+    while TCB.state != ST_ESTABLISHED {
+        poll_incoming();
+        if now_ticks() - start > 1000 {
+            crate::console::print(format_args!("J5.6: timeout waiting for connection\n"));
+            return;
+        }
+    }
+    crate::console::print(format_args!("J5.6: connection established\n"));
+
+    // Recevoir des données.
+    let mut buf = [0u8; 256];
+    let mut total = 0usize;
+    let start2 = now_ticks();
+    while total == 0 && now_ticks() - start2 < 200 {
+        poll_incoming();
+        let n = tcp_recv(&mut buf[total..]);
+        total += n;
+    }
+    if total > 0 {
+        crate::console::print(format_args!("J5.6: received {} bytes\n", total));
+    }
+
+    // Répondre.
+    let response = b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK";
+    tcp_send(response);
+    crate::console::print(format_args!("J5.6: response sent\n"));
+
+    // Fermer.
+    tcp_close();
+    crate::console::print(format_args!("J5.6: TCP server OK\n"));
+}
 pub unsafe fn tcp_close() {
     if TCB.state == ST_ESTABLISHED {
         let dst_mac = match mac_for(TCB.dst_ip) {

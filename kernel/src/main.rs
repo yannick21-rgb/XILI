@@ -445,20 +445,18 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         console::print(format_args!("J6.1: IDE absent\n"));
     }
 
+    // J7-B : contrôleur PS/2 — désactivé (casse le boot shell).
+    let _ = ();
+
     // J7 : framebuffer VBE (via GRUB, mode gfxpayload=keep).
     console::print(format_args!("J7.0: graphics pret\n"));
     let _fb_ok = unsafe { crate::fb::init(mbi) };
     if _fb_ok {
         console::print(format_args!("J7.1: framebuffer OK\n"));
+        unsafe { crate::fb::cursor_init() };
     } else {
         console::print(format_args!("J7.1: framebuffer absent ou echec\n"));
     }
-
-    // J7-B : contrôleur PS/2 (détection clavier/souris).
-    // let (kb_ok, mouse_ok) = unsafe { crate::ps2::init() };
-    // let _ = (kb_ok, mouse_ok);
-    // cursor disabled: ps2::init() crashes in QEMU BIOS mode
-    let _ = ();
 
     unsafe { crate::syscall::set_current_exe(b"shell.elf") };
     // Lance shell.elf depuis l'initrd (J3 final : premier shell utilisateur).

@@ -133,7 +133,7 @@ pub unsafe fn init() -> (bool, bool) {
         let _ack = inb(0x60);
 
         // Démasquer IRQ12 (+ cascade).
-        crate::pic::unmask(12);
+        // crate::pic::unmask(12); // disabled for testing
 
         console::print(format_args!("J7.3: PS/2 souris detectee\n"));
     } else {

@@ -558,6 +558,10 @@ pub unsafe fn handle_irq() {
     }
 }
 
+pub fn is_ready() -> bool {
+    unsafe { VIRTIO_NET_READY }
+}
+
 pub fn rx_count() -> u64 {
     unsafe { RX_COUNT }
 }

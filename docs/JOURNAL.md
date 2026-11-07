@@ -867,3 +867,36 @@ décisions prises.
 - Vérifié : `make test` + `make test-uefi` passent. Log : `K2.5c: OK`,
   `J2.5c: ... OK (pages 8)`.
 - Reste : kmalloc avec sérialisation (verrou par CPU) pour J3 SMP.
+
+## 2026-11-07 — J5 : TCP client + DNS client (noyau)
+
+- `kernel/src/net/tcp.rs` : client TCP synchrone (connect/send/recv/close) sur
+  un TCB global, handshake SYN/SYN-ACK/ACK, checksum TCP corrigé (pseudo-en-tête).
+  Marqueur `J5.4: TCP OK` (HTTP GET vers la passerelle, port 8080).
+- `kernel/src/net/dns.rs` : résolution DNS UDP (A) via 10.0.2.3, marqueur
+  `J5.5: DNS OK` (example.com -> IP).
+- IP statique conservée (10.0.2.15, passerelle 10.0.2.2, DNS 10.0.2.3) ;
+  DHCP, TLS/curl, apk distant reportés (après J7).
+- Vérifié : `make test` et `make test-net` passent ; aucun warning nouveau
+  (127 existants, static mut).
+- Reste : exposer SOCK_STREAM à userland, DHCP, TCP serveur (listen/accept),
+  TLS (mbedTLS) pour curl/apk.
+
+## 2026-11-07 — J7-A : framebuffer VBE/GOP
+
+- `kernel/src/mbi.rs` : tag 8 (FRAMEBUFFER) + `FramebufferInfo::read()`.
+- `kernel/src/fb.rs` : init, mapping higher-half page par page, dégradé,
+  `put_pixel`/`fill_color`. Marqueur `J7.1: framebuffer OK` (UEFI).
+- `boot/grub*.cfg` : gfxmode 1024x768x32 + gfxpayload (BIOS non actif
+  sous QEMU → mode texte, skip propre).
+- Vérifié : UEFI → framebuffer 1024x768x32, `J7.1: OK` ; BIOS → mode
+  texte, skip. `make test` + `make test-uefi` passent.
+- Reste : curseur, evdev, compositeur, Wayland, Mesa llvmpipe, dma-buf.
+
+## 2026-11-07 — J7-B1 : contrôleur PS/2
+
+- `kernel/src/ps2.rs` : init 8042 (self-test 0x55, test ports 0xAB/0xA9),
+  activation des ports et IRQ. Marqueurs `J7.2` (clavier) et `J7.3` (souris).
+- Vérifié : controller OK, clavier + souris détectés ; clavier toujours
+  fonctionnel (make test OK). `make test` + `make test-uefi` passent.
+- Reste : curseur logiciel, events clavier/souris via IRQ, evdev.

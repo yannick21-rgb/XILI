@@ -10,3 +10,5 @@
 #![allow(dead_code)]
 
 pub mod virtio_net;
+pub mod tcp;
+pub mod dns;

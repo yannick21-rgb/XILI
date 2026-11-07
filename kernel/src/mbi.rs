@@ -116,6 +116,8 @@ pub mod tag {
     pub const MEMORY_INFO: u16 = 1;
     /// Carte mémoire détaillée.
     pub const MEMORY_MAP: u16 = 6;
+    /// Framebuffer (VBE/GOP) fourni par GRUB.
+    pub const FRAMEBUFFER: u16 = 8;
 }
 
 /* ------------------------------------------------------------
@@ -244,6 +246,49 @@ impl MemInfo {
                 found = Some(MemInfo {
                     mem_lower: load_u32(mbi, off + 8),
                     mem_upper: load_u32(mbi, off + 12),
+                });
+            }
+        });
+
+        found
+    }
+}
+
+/// Informations du framebuffer Multiboot2 (tag 8).
+#[derive(Clone, Copy)]
+pub struct FramebufferInfo {
+    /// Adresse physique du framebuffer.
+    pub addr: u64,
+    /// Octets par ligne.
+    pub pitch: u32,
+    /// Largeur en pixels.
+    pub width: u32,
+    /// Hauteur en pixels.
+    pub height: u32,
+    /// Bits par pixel.
+    pub bpp: u8,
+    /// Type : 0 = indexé, 1 = RGB, 2 = EGA texte.
+    pub typ: u8,
+}
+
+impl FramebufferInfo {
+    /// Lit le tag 8 (FRAMEBUFFER) de la MBI.
+    ///
+    /// # Sécurité
+    ///
+    /// `mbi` doit être l'adresse physique de la MBI.
+    pub unsafe fn read(mbi: u32) -> Option<Self> {
+        let mut found: Option<Self> = None;
+
+        for_each_tag(mbi, |typ, off, size| {
+            if typ == tag::FRAMEBUFFER && size >= 32 {
+                found = Some(FramebufferInfo {
+                    addr: load_u64(mbi, off + 8),
+                    pitch: load_u32(mbi, off + 16),
+                    width: load_u32(mbi, off + 20),
+                    height: load_u32(mbi, off + 24),
+                    bpp: *((mbi as *const u8).add(off + 28)),
+                    typ: *((mbi as *const u8).add(off + 29)),
                 });
             }
         });

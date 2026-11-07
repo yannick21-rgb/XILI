@@ -114,6 +114,12 @@ fn handle_keyboard() {
     }
 }
 
+/// Handler souris (IRQ 12, vecteur 44).
+fn handle_mouse() {
+    let b = inb(0x60);
+    unsafe { crate::ps2::mouse_byte(b); }
+}
+
 /// Point d'entrée commun — appelé par `irq_common` en ASM.
 ///
 /// J2.8 : `gpr_ptr` pointe vers le bloc GPR sauvé par irq_common
@@ -146,6 +152,7 @@ pub extern "C" fn handle_irq(gpr_ptr: u64) -> u64 {
     match f.vector {
         32 => handle_timer(),
         33 => handle_keyboard(),
+        44 => handle_mouse(),
         // IRQ 3 (vecteur 35) : virtio-net. Le numéro exact dépend du
         // slot PCI ; on délègue au driver qui vérifie s'il est prêt.
         _ => {

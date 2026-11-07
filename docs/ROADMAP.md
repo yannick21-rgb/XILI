@@ -193,6 +193,17 @@ J1: noyau charge, mode long actif, console OK.
 - Reste J5 : TCP/IP complet (STREAM, connect/accept), DHCP/DNS,
   TLS/`curl`, `apk` réel.
 
+**J5-C (2026-11-07) — TCP client minimal** ✅
+- Client TCP synchrone (connect/send/recv/close) sur TCB global, handshake
+  SYN/SYN-ACK/ACK, checksum TCP (pseudo-en-tête) corrigé.
+- Marqueur : `J5.4: TCP OK` (HTTP GET vers la passerelle, port 8080).
+- Reste : serveur (listen/accept), fenêtre/retransmission, exposition à userland.
+
+**J5-D (2026-11-07) — DNS client minimal** ✅
+- Résolution A via 10.0.2.3 (QEMU user net), parsing de la réponse.
+- Marqueur : `J5.5: DNS OK` (example.com -> IP).
+- Reste : cache, DHCP (IP statique conservée).
+
 **J4-D (2026-11-06) — attente, clone, /proc, /dev** ✅
 - `epoll_create1/ctl/wait/pwait`, `eventfd2`, `signalfd4`, `timerfd_*`
   (objets VFS dédiés, ticks virtuels), `clone` (= fork sans THREAD).

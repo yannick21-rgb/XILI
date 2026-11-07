@@ -16,7 +16,7 @@
  *   5. OCW1  : mask = 0 (activer toutes les IRQ — on masquera ensuite)
  * ============================================================ */
 
-use crate::io::outb;
+use crate::io::{inb, outb};
 
 // --- Ports du PIC maître ---
 const PIC0_CMD: u16 = 0x20;
@@ -72,6 +72,22 @@ pub unsafe fn init() {
     outb(PIC1_CMD, PIC_EOI); // flush au PIC esclave
 }
 
+/// Démasque une IRQ (active l'interruption correspondante).
+///
+/// # Sécurité
+/// Doit être appelé après init(). Met à jour le masque OCW1.
+pub unsafe fn unmask(irq: u8) {
+    if irq < 8 {
+        let mask = inb(PIC0_DATA);
+        outb(PIC0_DATA, mask & !(1 << irq));
+    } else {
+        // démasquer aussi IRQ2 (cascade) sur le maître
+        let master = inb(PIC0_DATA);
+        outb(PIC0_DATA, master & !(1 << 2));
+        let slave = inb(PIC1_DATA);
+        outb(PIC1_DATA, slave & !(1 << (irq - 8)));
+    }
+}
 /// Envoie un EOI (End Of Interrupt) au(s) PIC(s) concerné(s).
 ///
 /// # Arguments

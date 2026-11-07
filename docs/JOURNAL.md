@@ -28,6 +28,24 @@ décisions prises.
 
 ---
 
+## 2026-11-07 — J6-C : ext2 écriture persistante + AHCI init
+
+- `ext2_write::create_file` câblé au boot : crée `xili.txt`
+  (inode alloué, blocs alloués, entrée répertoire) puis le relit.
+  Persistance vérifiée après reboot via debugfs (`cat xili.txt`).
+- Tampons ext2/ext2_write factorisés en scratch partagés
+  (économie ~40 Kio BSS, seuil de chargement noyau respecté).
+- AHCI : init validée sur ich9-ahci (SSTS/SIG/CLB) mais NON câblée
+  au boot (sa présence au chemin boot casse l'entrée ring3 —
+  layout limite). Lecture AHCI : commande complétée sans erreur
+  (CI/TFD/IS) mais DMA non rempli (FIS/PRDT à régler).
+- `fsync`/`fdatasync`/`sync` déjà livrés en J6-B.
+- Validation : `make test` OK, `make test-net` OK,
+  `make test-storage` OK, création ext2 persistante OK.
+- Reste J6 : AHCI lecture bout en bout + câblage boot sûr,
+  ext4 (extents), snapshots, swap.
+
+---
 ## 2026-11-07 — J6-B : AHCI init + fsync + ext2_write (WIP)
 
 - AHCI : `ahci::init` câblé au boot (J6.3). Sans device : absent propre.

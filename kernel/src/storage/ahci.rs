@@ -305,6 +305,7 @@ pub unsafe fn read_sector(lba: u64, buf: &mut [u8; 512]) -> bool {
     }
 
     let serr = mmio_read(port_base + PORT_SERR);
+    let _ = serr;
 
     // Copier les données
     core::ptr::copy_nonoverlapping(DATA_BUF as *const u8, buf.as_mut_ptr(), 512);

@@ -419,20 +419,24 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
                 crate::serial::write_byte(fbuf[i]);
             }
             crate::serial::write_byte(b'\n');
-            // J6-B : ext2 écriture non câblée au boot (WIP, allocateur à fiabiliser).
+            // J6-C : écriture — créer xili.txt puis le relire.
+            let data = b"ecrit par xili\n";
+            let new_ino = unsafe { crate::storage::ext2_write::create_file(b"xili.txt", data) };
+            crate::console::print(format_args!("ext2w: nouveau fichier inode={}\n", new_ino));
+            if new_ino != 0 {
+                let mut rbuf = [0u8; 64];
+                let rn = unsafe { crate::storage::ext2::read_file(new_ino, &mut rbuf) };
+                crate::console::print(format_args!("ext2: xili.txt ({} octets): ", rn));
+                for i in 0..rn {
+                    crate::serial::write_byte(rbuf[i]);
+                }
+                crate::serial::write_byte(b'\n');
+            }
         } else {
             console::print(format_args!("J6.2: ext2 echec\n"));
         }
     } else {
         console::print(format_args!("J6.1: IDE absent\n"));
-    }
-
-    // J6-B : AHCI (SATA) — test si contrôleur + device présents.
-    let _ahci_ok = unsafe { crate::storage::ahci::init() };
-    if _ahci_ok {
-        console::print(format_args!("J6.3: AHCI OK\n"));
-    } else {
-        console::print(format_args!("J6.3: AHCI absent\n"));
     }
 
     unsafe { crate::syscall::set_current_exe(b"shell.elf") };

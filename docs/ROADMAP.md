@@ -265,6 +265,14 @@ J1: noyau charge, mode long actif, console OK.
 - Tampons ext2 en statiques (fix stack overflow noyau).
 - Reste : AHCI lecture bout en bout, ext2 écriture, ext4, snapshots, swap.
 
+**J6-C (2026-11-07) — ext2 écriture persistante** ✅
+- `create_file` câblé au boot : inode + blocs alloués (bitmaps),
+  entrée répertoire, relecture OK, persistance après reboot (debugfs).
+- Tampons ext2 factorisés (scratch partagés, seuil BSS noyau).
+- AHCI : init validée (ich9-ahci), lecture DMA à régler, non câblée
+  au boot (casse l'entrée ring3 — layout limite).
+- Reste : AHCI lecture + câblage boot, ext4, snapshots, swap.
+
 
 **Objectif** : ne pas perdre de données.
 

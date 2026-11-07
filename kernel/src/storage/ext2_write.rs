@@ -8,6 +8,10 @@ use crate::storage::ide;
 
 const EXT2_ROOT_INO: u32 = 2;
 
+/// Tampons partagés uniques (économie BSS ~28 Kio, cf. seuil noyau).
+static mut WBITMAP: [u8; 4096] = [0u8; 4096];
+static mut WSCRATCH: [u8; 4096] = [0u8; 4096];
+
 fn read_u16(buf: &[u8], off: usize) -> u16 {
     (buf[off] as u16) | ((buf[off + 1] as u16) << 8)
 }
@@ -60,8 +64,7 @@ unsafe fn alloc_block() -> u32 {
 
     let block_bitmap_block = read_u32(&gd_buf, 0); // bg_block_bitmap at offset 0
 
-    static mut BITMAP: [u8; 4096] = [0u8; 4096];
-    let bitmap = unsafe { &mut BITMAP };
+    let bitmap: &mut [u8] = unsafe { &mut WBITMAP };
     if !read_block(block_bitmap_block, bitmap) { return 0; }
 
     let total_blocks = ext2::TOTAL_BLOCKS; // depuis le superblock
@@ -75,8 +78,7 @@ unsafe fn alloc_block() -> u32 {
             if !write_block(block_bitmap_block, bitmap) { return 0; }
 
             // Zero the block
-            static mut ZERO_BUF: [u8; 4096] = [0u8; 4096];
-            let _ = write_block(i as u32, unsafe { &ZERO_BUF });
+            let _ = write_block(i as u32, unsafe { &WSCRATCH });
 
             return i as u32;
         }
@@ -92,8 +94,7 @@ unsafe fn alloc_inode() -> u32 {
 
     let inode_bitmap_block = read_u32(&gd_buf, 4); // bg_inode_bitmap at offset 4
 
-    static mut BITMAP: [u8; 4096] = [0u8; 4096];
-    let bitmap = unsafe { &mut BITMAP };
+    let bitmap: &mut [u8] = unsafe { &mut WBITMAP };
     if !read_block(inode_bitmap_block, bitmap) { return 0; }
 
     // First non-reserved inode is 11 (s_first_ino). Inode N -> bit (N-1) in bitmap.
@@ -135,8 +136,7 @@ pub unsafe fn create_file(name: &[u8], data: &[u8]) -> u32 {
         block_nums[i] = b;
 
         // Write data to block
-        static mut BLK_BUF1: [u8; 4096] = [0u8; 4096];
-        let block_buf = unsafe { &mut BLK_BUF1 };
+        let block_buf: &mut [u8] = unsafe { &mut WSCRATCH };
         let off = i * bs;
         let chunk = bs.min(data.len() - off);
         if off < data.len() {
@@ -164,8 +164,7 @@ pub unsafe fn create_file(name: &[u8], data: &[u8]) -> u32 {
 
     // Write inode to disk
     // Find inode table block
-    static mut GD_BUF3: [u8; 4096] = [0u8; 4096];
-    let gd_buf = unsafe { &mut GD_BUF3 };
+    let gd_buf: &mut [u8] = unsafe { &mut WSCRATCH };
     let gd_block = ext2::FIRST_DATA_BLOCK + 1;
     if !read_block(gd_block, gd_buf) { return 0; }
     let inode_table_block = read_u32(gd_buf, 8);
@@ -177,8 +176,7 @@ pub unsafe fn create_file(name: &[u8], data: &[u8]) -> u32 {
 
     let target_block = inode_table_block + block_offset;
     // Read existing block, modify, write back
-    static mut BLK_BUF2: [u8; 4096] = [0u8; 4096];
-    let block_buf = unsafe { &mut BLK_BUF2 };
+    let block_buf: &mut [u8] = unsafe { &mut WSCRATCH };
     if !read_block(target_block, block_buf) { return 0; }
     for i in 0..ext2::INODE_SIZE as usize {
         block_buf[off_in_block + i] = inode_buf[i];
@@ -193,8 +191,7 @@ pub unsafe fn create_file(name: &[u8], data: &[u8]) -> u32 {
 
     // Find a block with space, or use first direct block
     let root_block_num = read_u32(root_inode_buf, 40); // i_block[0]
-    static mut DIR_BLK: [u8; 4096] = [0u8; 4096];
-    let dir_block = unsafe { &mut DIR_BLK };
+    let dir_block: &mut [u8] = unsafe { &mut WSCRATCH };
     if !read_block(root_block_num, dir_block) { return 0; }
 
     // Find end of directory entries (rec_len chain)
@@ -237,8 +234,7 @@ pub unsafe fn create_file(name: &[u8], data: &[u8]) -> u32 {
         // Need a new block — allocate
         let new_block = alloc_block();
         if new_block == 0 { return 0; }
-        static mut NEW_DIR_BLK: [u8; 4096] = [0u8; 4096];
-        let new_dir_block = unsafe { &mut NEW_DIR_BLK };
+        let new_dir_block: &mut [u8] = unsafe { &mut WSCRATCH };
         // First entry in new block
         write_u32(new_dir_block, 0, ino);
         write_u16(new_dir_block, 4, ext2::BLOCK_SIZE as u16);

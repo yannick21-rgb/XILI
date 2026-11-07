@@ -86,10 +86,6 @@ pub unsafe fn read_sector(lba: u32, buf: &mut [u8; 512]) -> bool {
         buf[i * 2 + 1] = ((word >> 8) & 0xFF) as u8;
     }
 
-    crate::console::print(format_args!(
-        "ide: secteur {} lu (premiers octets: {:02x} {:02x} {:02x} {:02x})\\n",
-        lba, buf[0], buf[1], buf[2], buf[3]
-    ));
     true
 }
 

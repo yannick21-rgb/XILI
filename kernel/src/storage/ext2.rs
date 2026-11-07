@@ -37,6 +37,9 @@ pub static mut INODE_SIZE: u32 = 128;
 pub static mut INODES_PER_GROUP: u32 = 0;
 pub static mut FIRST_DATA_BLOCK: u32 = 0;
 pub static mut TOTAL_BLOCKS: u32 = 0;
+/// Tampon partagé unique (32 Kio de statiques économisés, cf. seuil BSS).
+static mut SCRATCH: [u8; 4096] = [0u8; 4096];
+static mut SCRATCH2: [u8; 4096] = [0u8; 4096];
 
 fn read_u16(buf: &[u8], off: usize) -> u16 {
     (buf[off] as u16) | ((buf[off + 1] as u16) << 8)
@@ -118,8 +121,7 @@ pub unsafe fn read_inode(ino: u32, buf: &mut [u8]) -> bool {
     // Group descriptor is at block (FIRST_DATA_BLOCK + 1) for 1024-byte blocks
     // Actually, group descriptors start at block FIRST_DATA_BLOCK + 1
     let gd_block = FIRST_DATA_BLOCK + 1;
-    static mut GD_BUF: [u8; 4096] = [0u8; 4096];
-    let gd_buf: &mut [u8] = unsafe { &mut GD_BUF };
+    let gd_buf: &mut [u8] = unsafe { &mut SCRATCH };
     if !read_block(gd_block, gd_buf) { return false; }
 
     let inode_table_block = read_u32(&gd_buf, GD_INODE_TABLE);
@@ -131,8 +133,7 @@ pub unsafe fn read_inode(ino: u32, buf: &mut [u8]) -> bool {
     let off_in_block = (byte_offset % BLOCK_SIZE as u64) as usize;
 
     let target_block = inode_table_block + block_offset;
-    static mut BLK_BUF: [u8; 4096] = [0u8; 4096];
-    let block_buf: &mut [u8] = unsafe { &mut BLK_BUF };
+    let block_buf: &mut [u8] = unsafe { &mut SCRATCH };
     if !read_block(target_block, block_buf) { return false; }
 
     let bs = BLOCK_SIZE as usize;
@@ -158,8 +159,7 @@ pub unsafe fn list_dir(ino: u32) {
         let block_num = read_u32(&inode_buf, INO_BLOCK + b * 4);
         if block_num == 0 { break; }
 
-        static mut DIR_BUF: [u8; 4096] = [0u8; 4096];
-        let block_buf: &mut [u8] = unsafe { &mut DIR_BUF };
+        let block_buf: &mut [u8] = unsafe { &mut SCRATCH };
         if !read_block(block_num, block_buf) { continue; }
 
         let mut off = 0usize;
@@ -203,8 +203,7 @@ pub unsafe fn read_file(ino: u32, buf: &mut [u8]) -> usize {
         let block_num = read_u32(&inode_buf, INO_BLOCK + b * 4);
         if block_num == 0 { break; }
 
-        static mut FBUF: [u8; 4096] = [0u8; 4096];
-        let block_buf: &mut [u8] = unsafe { &mut FBUF };
+        let block_buf: &mut [u8] = unsafe { &mut SCRATCH };
         if !read_block(block_num, block_buf) { break; }
 
         let chunk = (BLOCK_SIZE as usize).min(to_read - total);
@@ -216,16 +215,15 @@ pub unsafe fn read_file(ino: u32, buf: &mut [u8]) -> usize {
     if total < to_read {
         let indirect_block = read_u32(&inode_buf, INO_BLOCK + 12 * 4);
         if indirect_block != 0 {
-            let mut ind_buf = [0u8; 4096];
-            if read_block(indirect_block, &mut ind_buf) {
+            let ind_buf: &mut [u8] = unsafe { &mut SCRATCH2 };
+            if read_block(indirect_block, ind_buf) {
                 let entries_per_block = BLOCK_SIZE as usize / 4;
                 for e in 0..entries_per_block {
                     if total >= to_read { break; }
                     let block_num = read_u32(&ind_buf, e * 4);
                     if block_num == 0 { break; }
 
-                    static mut FBUF2: [u8; 4096] = [0u8; 4096];
-                    let block_buf: &mut [u8] = unsafe { &mut FBUF2 };
+                    let block_buf: &mut [u8] = unsafe { &mut SCRATCH };
                     if !read_block(block_num, block_buf) { break; }
 
                     let chunk = (BLOCK_SIZE as usize).min(to_read - total);

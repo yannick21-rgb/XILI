@@ -729,18 +729,16 @@ pub unsafe fn map_page(vaddr: u64, paddr: u64, flags: u64) {
         // PD pointe déjà vers une PT existante.
         pde.addr() as *mut PageTable
     } else if pde.is_present() && pde.is_huge() {
-        // Diviser la grande page 2 Mio en 512 pages de 4 Kio.
-        let base = pde.addr();
-        let old_flags = pde.flags() & !HUGE;
+        // Grande page 2 Mio (HUGE) au niveau PD. On ne divise pas la plage :
+        // on ne garde que la page demandée. On alloue une nouvelle PT et on
+        // y pose l'entry 4 Kio qui couvre `vaddr` et qui pointe vers
+        // `paddr`. C'est la seule voie pour mapper un BAR MMIO arbitraire
+        // (ex: 0xfeb91000) dans le higher-half.
         let page = crate::mm::phys::alloc_page()
-            .expect("map_page: OOM PT") as u64;
+            .expect("map_page: OOM PT (huge-page split)") as u64;
         let new_pt = &mut *(page as *mut PageTable);
-        for i in 0..ENTRIES {
-            new_pt.set(i, Entry::new(
-                base + (i as u64) * PAGE_SIZE as u64,
-                old_flags,
-            ));
-        }
+        // Seule l'entry qui couvre `vaddr` est posée.
+        new_pt.set(pt_index(vaddr), Entry::new(paddr, PRESENT | WRITABLE));
         pd.set(pd_index(vaddr), Entry::new(page, LINK));
         unsafe {
             core::arch::asm!(

@@ -19,7 +19,9 @@ RUSTFLAGS := -C no-redzone=yes \
              -C relocation-model=static \
              -C code-model=kernel \
              -C link-arg=-nostdlib \
-             -C link-arg=-static \
+             -C link-arg=-nodefaultlibs \
+             -C link-arg=-Wl,--exclude-libs=Scrt1.o \
+             -C link-arg=-Wl,--gc-sections \
              -C link-arg=-no-pie \
              -C link-arg=-Wl,--build-id=none \
              -C link-arg=-T$(CURDIR)/kernel/linker.ld

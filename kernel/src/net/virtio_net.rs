@@ -7,7 +7,7 @@
 //! - `recv()` : réception d'une trame Ethernet
 //! - `arp_probe()` : émet un ARP « who-has » et attend la réponse
 
-use crate::io::{inl, outl};
+use crate::io::{inb, inl, inw, outb, outl, outw};
 use crate::mm::phys::alloc_page;
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ struct VirtqUsed {
     ring: [VirtqUsedElem; 256],
 }
 
-const VIRTQ_NUM: usize = 8;
+const VIRTQ_NUM: usize = 256;
 const VIRTQ_DESC_SIZE: usize = VIRTQ_NUM * 16;
 const VIRTQ_AVAIL_SIZE: usize = 4 + VIRTQ_NUM * 2;
 const VIRTQ_USED_SIZE: usize = 4 + VIRTQ_NUM * 8;
@@ -152,7 +152,7 @@ static mut TX_COUNT: u64 = 0;
 // Helpers PCI
 // ---------------------------------------------------------------------------
 
-unsafe fn pci_read_config(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
+pub unsafe fn pci_read_config(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
     let address = (1u32 << 31)
         | ((bus as u32) << 16)
         | ((slot as u32) << 11)
@@ -247,7 +247,7 @@ unsafe fn pci_find_virtio_caps(
     (common_base, common_off, notify_base, notify_off, device_base, device_off)
 }
 
-unsafe fn pci_write_config(bus: u8, slot: u8, func: u8, offset: u8, value: u32) {
+pub unsafe fn pci_write_config(bus: u8, slot: u8, func: u8, offset: u8, value: u32) {
     let address = (1u32 << 31)
         | ((bus as u32) << 16)
         | ((slot as u32) << 11)
@@ -255,6 +255,26 @@ unsafe fn pci_write_config(bus: u8, slot: u8, func: u8, offset: u8, value: u32) 
         | ((offset as u32) & 0xFC);
     outl(PCI_CONFIG_ADDRESS, address);
     outl(PCI_CONFIG_DATA, value);
+}
+
+pub unsafe fn pci_find_class(class: u8, subclass: u8) -> Option<(u8, u8, u8, u32)> {
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let cfg = pci_read_config(0, slot, func, 0);
+            let v = (cfg & 0xFFFF) as u16;
+            if v == 0xFFFF {
+                continue;
+            }
+            let cls = pci_read_config(0, slot, func, 0x08);
+            let class_code = ((cls >> 24) & 0xFF) as u8;
+            let sub = ((cls >> 16) & 0xFF) as u8;
+            if class_code == class && sub == subclass {
+                let bar0 = pci_read_config(0, slot, func, 0x10);
+                return Some((0, slot, func, bar0));
+            }
+        }
+    }
+    None
 }
 
 unsafe fn pci_find_device(vendor: u16, device: u16) -> Option<(u8, u8, u8, u32)> {
@@ -339,38 +359,88 @@ unsafe fn virtio_driver_features(base: u64, features: u64) {
     virtio_write(base, VIRTIO_OFF_DRIVER_FEATURES, (features >> 32) as u32);
 }
 
+/// Initialise le driver virtio-net (mode legacy, BAR0 I/O).
+pub unsafe fn init() -> bool {
+    pci_dump_all();
+
+    let (bus, slot, func, bar0) = match pci_find_device(PCI_VENDOR_ID, PCI_DEVICE_ID) {
+        Some(v) => v,
+        None => return false,
+    };
+
+    let io_base = (bar0 & 0xFFFF_FFFC) as u16;
+
+    // Activer le périphérique : I/O space + mémoire + bus master.
+    let cmd = pci_read_config(bus, slot, func, PCI_COMMAND);
+    pci_write_config(bus, slot, func, PCI_COMMAND, cmd | 0x07);
+
+    VIRTIO_NET_BASE = io_base as u64;
+    VIRTIO_NET_IS_IO = true;
+
+    // Reset puis ACK + DRIVER.
+    outb(io_base + 18, 0);
+    outb(io_base + 18, (VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER) as u8);
+
+    // Features : on accepte VIRTIO_NET_F_MAC (bit 5).
+    let _host_features = inl(io_base);
+    outl(io_base + 4, VIRTIO_NET_F_MAC as u32);
+
+    // Queues RX (0) et TX (1).
+    virtq_init(VIRTIO_NET_BASE, 0, &mut RXQ);
+    virtq_init(VIRTIO_NET_BASE, 1, &mut TXQ);
+
+    // DRIVER_OK.
+    outb(
+        io_base + 18,
+        (VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK) as u8,
+    );
+
+    let irq_cfg = pci_read_config(bus, slot, func, 0x3C);
+    VIRTIO_NET_IRQ = (irq_cfg & 0xFF) as u8;
+    VIRTIO_NET_READY = true;
+
+    crate::console::print(format_args!(
+        "virtio-net: device PCI trouve, IRQ={}, base=0x{:x}\n",
+        VIRTIO_NET_IRQ, io_base
+    ));
+
+    true
+}
+
 unsafe fn virtq_init(base: u64, idx: u16, q: *mut Virtq) {
+    // Allouer 4 pages contiguës pour le vring (desc@0, avail@4096, used@8192).
     let page = alloc_page().expect("virtio_net: alloc_page");
+    let p2 = alloc_page().expect("virtio_net: alloc_page2");
+    let p3 = alloc_page().expect("virtio_net: alloc_page3");
+    let p4 = alloc_page().expect("virtio_net: alloc_page4");
     let va = page as u64;
-    core::ptr::write_bytes(va as *mut u8, 0, 0x1000);
+    // Vérifier la contiguïté.
+    if p2 != page + 0x1000 || p3 != page + 0x2000 || p4 != page + 0x3000 {
+        crate::console::print(format_args!(
+            "virtio-net: pages non contigues {} {} {} {}\n",
+            page, p2, p3, p4
+        ));
+    }
+    core::ptr::write_bytes(va as *mut u8, 0, 0x4000);
 
     let desc = va as *mut VirtqDesc;
-    let avail = (va + VIRTQ_DESC_SIZE as u64) as *mut VirtqAvail;
-    let used = (va + (VIRTQ_DESC_SIZE + VIRTQ_AVAIL_SIZE) as u64) as *mut VirtqUsed;
+    let avail = (va + 0x1000) as *mut VirtqAvail;
+    let used = (va + 0x2000) as *mut VirtqUsed;
 
-    virtio_write(base, VIRTIO_OFF_QUEUE_SEL, idx as u32);
-    let num_max = virtio_read(base, VIRTIO_OFF_QUEUE_NUM_MAX);
-    if num_max < VIRTQ_NUM as u32 {
+    let port = base as u16;
+    // Sélectionner la queue.
+    outw(port + 14, idx);
+    // Réduire la taille de la queue (optionnel) + lecture du max.
+    outw(port + 12, VIRTQ_NUM as u16);
+    let num_max = inw(port + 12);
+    if num_max < VIRTQ_NUM as u16 {
         crate::console::print(format_args!(
             "virtio-net: queue {} num_max {} < {}\n",
             idx, num_max, VIRTQ_NUM
         ));
     }
-    virtio_write(base, VIRTIO_OFF_QUEUE_NUM, VIRTQ_NUM as u32);
-
-    // Adresses physiques des structures (mode moderne).
-    let desc_pa = va;
-    let avail_pa = va + VIRTQ_DESC_SIZE as u64;
-    let used_pa = va + (VIRTQ_DESC_SIZE + VIRTQ_AVAIL_SIZE) as u64;
-    virtio_write(base, 0x060, desc_pa as u32);
-    virtio_write(base, 0x064, (desc_pa >> 32) as u32);
-    virtio_write(base, 0x068, avail_pa as u32);
-    virtio_write(base, 0x06C, (avail_pa >> 32) as u32);
-    virtio_write(base, 0x070, used_pa as u32);
-    virtio_write(base, 0x074, (used_pa >> 32) as u32);
-
-    // Activer la queue.
-    virtio_write(base, VIRTIO_OFF_QUEUE_READY, 1);
+    // Adresse physique de la queue (PFN = page >> 12).
+    outl(port + 8, (page >> 12) as u32);
 
     (*q).desc = desc;
     (*q).avail = avail;
@@ -379,10 +449,6 @@ unsafe fn virtq_init(base: u64, idx: u16, q: *mut Virtq) {
     (*q).last_used = 0;
     (*q).phys = va;
 }
-
-// ---------------------------------------------------------------------------
-// RX : poster des descripteurs
-// ---------------------------------------------------------------------------
 
 unsafe fn rx_post(q: *mut Virtq, buf_phys: u64, len: u16) {
     let i = (*q).next as usize;
@@ -401,129 +467,18 @@ unsafe fn rx_post(q: *mut Virtq, buf_phys: u64, len: u16) {
     (*q).next = ((*q).next + 1) % VIRTQ_NUM as u16;
 }
 
-// ---------------------------------------------------------------------------
-// API publique
-// ---------------------------------------------------------------------------
-
-/// Initialise le driver virtio-net.
-pub unsafe fn init() -> bool {
-    pci_dump_all();
-
-    let (bus, slot, func, bar0) = match pci_find_device(PCI_VENDOR_ID, PCI_DEVICE_ID) {
-        Some(v) => v,
-        None => return false,
-    };
-
-    let base = bar0 & 0xFFFF_FFF0;
-
-    // Activer le périphérique AVANT les lectures : I/O space + bus master.
-    // Sans le bit 0 du command register, les accès ports I/O sont ignorés.
-    let cmd = pci_read_config(bus, slot, func, PCI_COMMAND);
-    pci_write_config(bus, slot, func, PCI_COMMAND, cmd | 0x05);
-
-    // Lire les capacités PCI pour trouver le registre virtio.
-    let (common_base, common_off, notify_base, notify_off, device_base, device_off) =
-        pci_find_virtio_caps(bus, slot, func);
-
-    if common_base == 0 {
-        crate::console::print(format_args!("virtio-net: pas de cap common\n"));
-        return false;
-    }
-
-    // Mapper le BAR de la capability common à une adresse virtuelle
-    // dans le higher-half du noyau (0xFFFF_FFFF_8000_0000 + offset).
-    // L'identity map ne couvre pas le BAR1 (0xfeb91000 > 1 Gio).
-    let vma = crate::mm::paging::HIGHER_HALF + common_base as u64;
-    for i in 0..16u64 {
-        let vaddr = vma + i * 0x1000;
-        let pa = common_base as u64 + i * 0x1000;
-        unsafe {
-            crate::mm::paging::map_page(
-                vaddr,
-                pa,
-                crate::mm::paging::PRESENT | crate::mm::paging::WRITABLE,
-            );
-        }
-    }
-    VIRTIO_NET_BASE = vma + common_off as u64;
-    VIRTIO_NET_IS_IO = false;
-
-    // Lire le magic APRÈS l'activation du command register.
-    let magic = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_MAGIC);
-    let version = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_VERSION);
-    let device_id = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_DEVICE_ID);
-
-    crate::console::print(format_args!(
-        "virtio-net: common base=0x{:x} off=0x{:x} magic=0x{:x} ver={} dev={}\n",
-        common_base, common_off, magic, version, device_id
-    ));
-
-    if magic != VIRTIO_MAGIC || device_id != VIRTIO_DEVICE_ID_NET {
-        crate::console::print(format_args!(
-            "virtio-net: rejet magic=0x{:x} dev={}\n",
-            magic, device_id
-        ));
-        return false;
-    }
-
-    // Négociation de features (mode moderne).
-    let features = virtio_features(VIRTIO_NET_BASE);
-    crate::console::print(format_args!(
-        "virtio-net: device_features=0x{:x}\n",
-        features
-    ));
-    let wanted = VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC;
-    virtio_driver_features(VIRTIO_NET_BASE, wanted);
-    virtio_write(
-        VIRTIO_NET_BASE,
-        VIRTIO_OFF_STATUS,
-        VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
-    );
-    let status = virtio_read(VIRTIO_NET_BASE, VIRTIO_OFF_STATUS);
-    if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-        crate::console::print(format_args!(
-            "virtio-net: FEATURES_OK refuse (status=0x{:x})\n",
-            status
-        ));
-        return false;
-    }
-
-    virtq_init(VIRTIO_NET_BASE, 0, &mut RXQ);
-    virtq_init(VIRTIO_NET_BASE, 1, &mut TXQ);
-
-    virtio_write(
-        VIRTIO_NET_BASE,
-        VIRTIO_OFF_STATUS,
-        VIRTIO_STATUS_ACK
-            | VIRTIO_STATUS_DRIVER
-            | VIRTIO_STATUS_FEATURES_OK
-            | VIRTIO_STATUS_DRIVER_OK,
-    );
-
-    let irq_cfg = pci_read_config(bus, slot, func, 0x3C);
-    VIRTIO_NET_IRQ = (irq_cfg & 0xFF) as u8;
-    VIRTIO_NET_READY = true;
-
-    crate::console::print(format_args!(
-        "virtio-net: device PCI trouve, IRQ={}, base=0x{:x}\n",
-        VIRTIO_NET_IRQ, base
-    ));
-
-    true
-}
-
 /// Poste les descripteurs RX initiaux.
 pub unsafe fn rx_init_buffers() {
     if !VIRTIO_NET_READY {
         return;
     }
-    for _ in 0..VIRTQ_NUM {
+    for _ in 0..16 {
         let page = alloc_page().expect("virtio_net: rx buffer");
         core::ptr::write_bytes(page as *mut u8, 0, 0x1000);
         rx_post(&mut RXQ, page as u64, 0x1000);
     }
-    // Notifier le device qu'il y a des descripteurs disponibles.
-    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_QUEUE_NOTIFY, 0);
+// Notifier le device qu'il y a des descripteurs disponibles.
+    crate::io::outw(VIRTIO_NET_BASE as u16 + 16, 0);
     crate::console::print(format_args!("virtio-net: {} tampons RX postes\n", VIRTQ_NUM));
 }
 
@@ -537,13 +492,15 @@ pub unsafe fn send(data: &[u8]) -> usize {
         Some(p) => p,
         None => return 0,
     };
-    let n = core::cmp::min(data.len(), 0x1000);
-    core::ptr::copy_nonoverlapping(data.as_ptr(), page as *mut u8, n);
+    let n = core::cmp::min(data.len(), 0x1000 - 10);
+    // En-tête virtio-net (10 octets) suivi de la trame Ethernet.
+    core::ptr::write_bytes(page as *mut u8, 0, 10);
+    core::ptr::copy_nonoverlapping(data.as_ptr(), (page as *mut u8).add(10), n);
 
     let i = TXQ.next as usize;
     let desc = &mut *TXQ.desc.add(i);
     desc.addr = page as u64;
-    desc.len = n as u32;
+    desc.len = (n + 10) as u32;
     desc.flags = 0;
     desc.next = 0;
 
@@ -555,7 +512,7 @@ pub unsafe fn send(data: &[u8]) -> usize {
     TXQ.next = (TXQ.next + 1) % VIRTQ_NUM as u16;
 
     // Notifier le device.
-    virtio_write(VIRTIO_NET_BASE, VIRTIO_OFF_QUEUE_NOTIFY, 1);
+    crate::io::outw(VIRTIO_NET_BASE as u16 + 16, 1);
 
     TX_COUNT += 1;
     n
@@ -572,16 +529,18 @@ pub unsafe fn recv(buf: &mut [u8]) -> usize {
         return 0;
     }
 
-    let elem = (*RXQ.used).ring[rx_used % VIRTQ_NUM];
+    let elem = (*RXQ.used).ring[RXQ.last_used as usize % VIRTQ_NUM];
     let elem_id = elem.id;
     let elem_len = elem.len;
-    RXQ.last_used = rx_used.wrapping_add(1) as u16;
+    RXQ.last_used = RXQ.last_used.wrapping_add(1) as u16;
     RX_COUNT += 1;
 
     let desc = &*RXQ.desc.add(elem_id as usize);
     let src = desc.addr as *const u8;
-    let n = core::cmp::min(elem_len as usize, buf.len());
-    core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), n);
+    let total = elem_len as usize;
+    let payload = total.saturating_sub(10);
+    let n = core::cmp::min(payload, buf.len());
+    core::ptr::copy_nonoverlapping(src.add(10), buf.as_mut_ptr(), n);
 
     n
 }
@@ -640,7 +599,175 @@ pub fn is_arp_reply(buf: &[u8], target_ip: [u8; 4]) -> bool {
     if buf[20..22] != [0x00, 0x02] {
         return false;
     }
-    buf[38..42] == target_ip
+    buf[28..32] == target_ip
+}
+
+/// Résout une IP en MAC via ARP. Retourne la MAC de l'émetteur.
+pub unsafe fn arp_resolve(target_ip: [u8; 4], timeout_ticks: u64) -> Option<[u8; 6]> {
+    if !VIRTIO_NET_READY {
+        return None;
+    }
+    let src_mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+    let sender_ip = [10, 0, 2, 15];
+
+    let mut frame = [0u8; 64];
+    let n = build_arp_who_has(&mut frame, &src_mac, sender_ip, target_ip);
+    send(&frame[..n]);
+
+    let start = crate::irq::ticks();
+    let mut buf = [0u8; 64];
+    while crate::irq::ticks() - start < timeout_ticks {
+        let got = recv(&mut buf);
+        if got >= 42 && buf[12..14] == [0x08, 0x06] && buf[20..22] == [0x00, 0x02] {
+            // ARP reply : sender MAC at offset 22, sender IP at offset 28
+            if buf[28..32] == target_ip {
+                let mut mac = [0u8; 6];
+                mac.copy_from_slice(&buf[22..28]);
+                return Some(mac);
+            }
+        }
+    }
+    None
+}
+
+/// Calcule le checksum IP (sur l'en-tête IP de 20 octets).
+fn ip_checksum(hdr: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = 0;
+    while i + 1 < hdr.len() {
+        let word = ((hdr[i] as u32) << 8) | (hdr[i + 1] as u32);
+        sum = sum.wrapping_add(word);
+        i += 2;
+    }
+    if i < hdr.len() {
+        sum = sum.wrapping_add((hdr[i] as u32) << 8);
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+/// Calcule le checksum ICMP (sur l'en-tête + payload).
+fn icmp_checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = 0;
+    while i + 1 < data.len() {
+        let word = ((data[i] as u32) << 8) | (data[i + 1] as u32);
+        sum = sum.wrapping_add(word);
+        i += 2;
+    }
+    if i < data.len() {
+        sum = sum.wrapping_add((data[i] as u32) << 8);
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+/// Ping ICMP : envoie un echo request et attend l'echo reply.
+pub unsafe fn ping(target_ip: [u8; 4], timeout_ticks: u64) -> bool {
+    if !VIRTIO_NET_READY {
+        return false;
+    }
+    let src_mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+    let src_ip = [10, 0, 2, 15];
+
+    // Résoudre la MAC de la cible.
+    let dst_mac = match arp_resolve(target_ip, 100) {
+        Some(m) => m,
+        None => {
+            crate::console::print(format_args!("ping: ARP resolve echec\n"));
+            return false;
+        }
+    };
+    crate::console::print(format_args!(
+        "ping: MAC cible = {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}\n",
+        dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5]
+    ));
+
+    // Construire la trame ICMP echo request.
+    let mut frame = [0u8; 64];
+    // Ethernet header (14 bytes)
+    frame[0..6].copy_from_slice(&dst_mac);
+    frame[6..12].copy_from_slice(&src_mac);
+    frame[12..14].copy_from_slice(&[0x08, 0x00]); // IPv4
+
+    // IP header (20 bytes, offset 14)
+    let ip_off = 14;
+    frame[ip_off] = 0x45; // version 4, IHL 5
+    frame[ip_off + 1] = 0; // TOS
+    let total_len: u16 = 20 + 8 + 4; // IP + ICMP + 4 bytes payload
+    frame[ip_off + 2] = (total_len >> 8) as u8;
+    frame[ip_off + 3] = (total_len & 0xFF) as u8;
+    frame[ip_off + 4] = 0; // ID high
+    frame[ip_off + 5] = 0x01; // ID low
+    frame[ip_off + 6] = 0; // flags/frag high
+    frame[ip_off + 7] = 0; // frag low
+    frame[ip_off + 8] = 64; // TTL
+    frame[ip_off + 9] = 1; // protocol = ICMP
+    frame[ip_off + 10] = 0; // checksum high (à calculer)
+    frame[ip_off + 11] = 0; // checksum low
+    frame[ip_off + 12..ip_off + 16].copy_from_slice(&src_ip);
+    frame[ip_off + 16..ip_off + 20].copy_from_slice(&target_ip);
+
+    // Calculer le checksum IP
+    let ip_cksum = ip_checksum(&frame[ip_off..ip_off + 20]);
+    frame[ip_off + 10] = (ip_cksum >> 8) as u8;
+    frame[ip_off + 11] = (ip_cksum & 0xFF) as u8;
+
+    // ICMP header (8 bytes, offset 34)
+    let icmp_off = ip_off + 20;
+    frame[icmp_off] = 8; // type = echo request
+    frame[icmp_off + 1] = 0; // code
+    frame[icmp_off + 2] = 0; // checksum high
+    frame[icmp_off + 3] = 0; // checksum low
+    frame[icmp_off + 4] = 0; // id high
+    frame[icmp_off + 5] = 0x01; // id low
+    frame[icmp_off + 6] = 0; // seq high
+    frame[icmp_off + 7] = 0x01; // seq low
+    // Payload (4 bytes)
+    frame[icmp_off + 8] = 0xDE;
+    frame[icmp_off + 9] = 0xAD;
+    frame[icmp_off + 10] = 0xBE;
+    frame[icmp_off + 11] = 0xEF;
+
+    // Calculer le checksum ICMP
+    let icmp_cksum = icmp_checksum(&frame[icmp_off..icmp_off + 12]);
+    frame[icmp_off + 2] = (icmp_cksum >> 8) as u8;
+    frame[icmp_off + 3] = (icmp_cksum & 0xFF) as u8;
+
+    let frame_len = 14 + 20 + 8 + 4; // 46 bytes
+    let sent = send(&frame[..frame_len]);
+    crate::console::print(format_args!("ping: echo request envoye ({} octets)\n", sent));
+
+    // Attendre la reply
+    let start = crate::irq::ticks();
+    let mut buf = [0u8; 64];
+    while crate::irq::ticks() - start < timeout_ticks {
+        let got = recv(&mut buf);
+        if got >= 42 {
+            // Vérifier Ethernet + IP + ICMP
+            if buf[12..14] == [0x08, 0x00] {
+                let proto = buf[ip_off + 9];
+                if proto == 1 {
+                    let icmp_type = buf[icmp_off];
+                    if icmp_type == 0 {
+                        // Echo reply
+                        let reply_id = ((buf[icmp_off + 4] as u16) << 8) | (buf[icmp_off + 5] as u16);
+                        let reply_seq = ((buf[icmp_off + 6] as u16) << 8) | (buf[icmp_off + 7] as u16);
+                        if reply_id == 0x0001 && reply_seq == 0x0001 {
+                            crate::console::print(format_args!("ping: echo reply recu de {:?}\n", target_ip));
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    crate::console::print(format_args!("ping: timeout apres {} ticks\n", timeout_ticks));
+    false
 }
 
 /// Sonde ARP : émet un « who-has » et attend la réponse.

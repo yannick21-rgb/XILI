@@ -457,6 +457,8 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
     // J7-B : contrôleur PS/2 (détection clavier/souris).
     // let (kb_ok, mouse_ok) = unsafe { crate::ps2::init() };
     // let _ = (kb_ok, mouse_ok);
+    // cursor disabled: ps2::init() crashes in QEMU BIOS mode
+    let _ = ();
 
     unsafe { crate::syscall::set_current_exe(b"shell.elf") };
     // Lance shell.elf depuis l'initrd (J3 final : premier shell utilisateur).

@@ -126,9 +126,95 @@ pub unsafe fn fill_color(color: u32) {
     }
 }
 
-// Remove cursor support - keep only framebuffer init + put_pixel + fill
-pub unsafe fn cursor_init() {}
-pub unsafe fn cursor_move(_new_x: i32, _new_y: i32) {}
+const CURSOR_W: usize = 12;
+const CURSOR_H: usize = 19;
+static mut CURSOR_BG: [u32; CURSOR_W * CURSOR_H] = [0; CURSOR_W * CURSOR_H];
+static mut CURSOR_X: i32 = 0;
+static mut CURSOR_Y: i32 = 0;
+static mut CURSOR_DRAWN: bool = false;
+static mut CURSOR_READY: bool = false;
+
+const CURSOR_PATTERN: [u16; CURSOR_H] = [
+    0b100000000000, 0b110000000000, 0b111000000000, 0b111100000000,
+    0b111110000000, 0b111111000000, 0b111111100000, 0b111111110000,
+    0b111111111000, 0b111111100000, 0b111110000000, 0b111011000000,
+    0b110001100000, 0b100000110000, 0b000000011000, 0b000000001100,
+    0b000000000110, 0b000000000011, 0b000000000001,
+];
+
+#[inline(never)]
+unsafe fn read_pixel(x: u32, y: u32) -> u32 {
+    if !FB_READY || x >= FB_WIDTH || y >= FB_HEIGHT {
+        return 0;
+    }
+    let offset = (y as u64) * (FB_PITCH as u64) + (x as u64) * 4;
+    core::ptr::read_volatile((FB_VIRT + offset) as *const u32)
+}
+
+#[inline(never)]
+unsafe fn cursor_save_bg() {
+    if !FB_READY { return; }
+    for row in 0..CURSOR_H {
+        for col in 0..CURSOR_W {
+            let px = CURSOR_X + col as i32;
+            let py = CURSOR_Y + row as i32;
+            if px >= 0 && py >= 0 && (px as u32) < FB_WIDTH && (py as u32) < FB_HEIGHT {
+                CURSOR_BG[row * CURSOR_W + col] = read_pixel(px as u32, py as u32);
+            }
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn cursor_restore_bg() {
+    if !FB_READY || !CURSOR_DRAWN { return; }
+    for row in 0..CURSOR_H {
+        for col in 0..CURSOR_W {
+            let px = CURSOR_X + col as i32;
+            let py = CURSOR_Y + row as i32;
+            if px >= 0 && py >= 0 && (px as u32) < FB_WIDTH && (py as u32) < FB_HEIGHT {
+                put_pixel(px as u32, py as u32, CURSOR_BG[row * CURSOR_W + col]);
+            }
+        }
+    }
+    CURSOR_DRAWN = false;
+}
+
+#[inline(never)]
+unsafe fn cursor_draw() {
+    if !FB_READY { return; }
+    for row in 0..CURSOR_H {
+        for col in 0..CURSOR_W {
+            if CURSOR_PATTERN[row] & (1 << (CURSOR_W - 1 - col)) != 0 {
+                let px = CURSOR_X + col as i32;
+                let py = CURSOR_Y + row as i32;
+                if px >= 0 && py >= 0 && (px as u32) < FB_WIDTH && (py as u32) < FB_HEIGHT {
+                    put_pixel(px as u32, py as u32, 0x00FFFFFF); // white cursor
+                }
+            }
+        }
+    }
+    CURSOR_DRAWN = true;
+}
+
+pub unsafe fn cursor_init() {
+    if !FB_READY { return; }
+    CURSOR_X = (FB_WIDTH as i32) / 2;
+    CURSOR_Y = (FB_HEIGHT as i32) / 2;
+    cursor_save_bg();
+    cursor_draw();
+    CURSOR_READY = true;
+}
+
+pub unsafe fn cursor_move(new_x: i32, new_y: i32) {
+    if !CURSOR_READY { return; }
+    cursor_restore_bg();
+    CURSOR_X = new_x;
+    CURSOR_Y = new_y;
+    cursor_save_bg();
+    cursor_draw();
+}
+
 pub unsafe fn cursor_ready() -> bool {
-    false
+    CURSOR_READY
 }

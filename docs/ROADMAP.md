@@ -180,6 +180,19 @@ J1: noyau charge, mode long actif, console OK.
 - `/proc/self/maps` au format Linux réel.
 - Sonde : `make test-j4a PROBE=probe_j4b.elf PROBE_MARKER="probe_j4b: OK"`.
 
+**J5-A (2026-11-06) — virtio-net + ping** ✅
+- Driver virtio-net legacy (BAR0 I/O), queues RX/TX, ARP, ping ICMP
+  (10.0.2.2, passerelle QEMU user networking). `make test-net` OK,
+  `J5.3: ping OK`.
+
+**J5-B (2026-11-07) — sockets UDP minimaux** ✅
+- `socket/bind/connect/sendto/recvfrom` AF_INET/SOCK_DGRAM (ARP,
+  checksum IP, UDP checksum 0, démux RX sur port lié).
+- Sonde : QEMU `-netdev user + virtio-net`, `probe_j5.elf` ->
+  `probe_j5: OK` (sendto 10.0.2.2:53, recvfrom EAGAIN).
+- Reste J5 : TCP/IP complet (STREAM, connect/accept), DHCP/DNS,
+  TLS/`curl`, `apk` réel.
+
 **J4-D (2026-11-06) — attente, clone, /proc, /dev** ✅
 - `epoll_create1/ctl/wait/pwait`, `eventfd2`, `signalfd4`, `timerfd_*`
   (objets VFS dédiés, ticks virtuels), `clone` (= fork sans THREAD).

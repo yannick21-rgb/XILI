@@ -123,6 +123,19 @@ const SYS_EVENTFD2: u64 = 290;
 const SYS_EPOLL_CREATE1: u64 = 291;
 const SYS_TIMERFD_SETTIME: u64 = 86;
 const SYS_TIMERFD_GETTIME: u64 = 87;
+const SYS_SOCKET: u64 = 41;
+const SYS_CONNECT: u64 = 42;
+const SYS_ACCEPT: u64 = 43;
+const SYS_SENDMSG: u64 = 44;
+const SYS_RECVMSG: u64 = 45;
+const SYS_SENDTO: u64 = 44;
+const SYS_RECVFROM: u64 = 45;
+const SYS_BIND: u64 = 49;
+const SYS_LISTEN: u64 = 50;
+const SYS_SETSOCKOPT: u64 = 54;
+const SYS_GETSOCKOPT: u64 = 55;
+const SYS_SOCKETPAIR: u64 = 53;
+const SYS_ACCEPT4: u64 = 288;
 
 /// Descripteurs fichiers — 3 emplacements réservés (stdin/stdout/stderr),
 /// fd 3+ réservés aux fichiers du VFS. La table vive est celle du VFS
@@ -183,7 +196,7 @@ static mut CTXS: [Option<SavedCtx>; task::MAX_TASKS] = [None; task::MAX_TASKS];
 /// execve ne fork qu'une fois dans nos sondes) : l'enfant fork reçoit
 /// une copie de la pile du parent, sinon parent/enfant se corrompent
 /// mutuellement l'adresse de retour (pile partagée, même CR3).
-static mut USER_STACKS: [[u8; 8192]; 2] = [[0; 8192]; 2];
+static mut USER_STACKS: [[u8; 8192]; 1] = [[0; 8192]; 1];
 /// État par tâche userland : 0 Running, 1 Ready, 2 Waiting, 3 Zombie, 4 Free.
 static mut TASK_STATE: [u8; task::MAX_TASKS] = [4; task::MAX_TASKS];
 /// Switch coopératif demandé par wait4/exit, appliqué par handle_syscall
@@ -314,7 +327,7 @@ fn sys_fork(gpr_ptr: u64) -> i64 {
         // haut de la pile enfant, RSP ajusté d'autant.
         let parent_rsp = gprs[14]; // R15 = user RSP
         const COPY: usize = 4096;
-        let slot = if child_task_id < 2 { child_task_id } else { child_task_id % 2 };
+        let slot = child_task_id % USER_STACKS.len();
         let child_base = USER_STACKS[slot].as_mut_ptr() as u64;
         let child_rsp = child_base + 8192 - COPY as u64;
         core::ptr::copy_nonoverlapping(parent_rsp as *const u8, child_rsp as *mut u8, COPY);
@@ -1543,6 +1556,141 @@ fn sys_timerfd_settime(fd: u64, _flags: u64, new_value: u64, _old_value: u64) ->
     0
 }
 
+
+/* ------------------------------------------------------------ *
+ * J5-B : sockets UDP minimaux (AF_INET/SOCK_DGRAM)
+ * ------------------------------------------------------------ */
+
+fn cksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = 0;
+    while i + 1 < data.len() { sum = sum.wrapping_add(((data[i] as u32) << 8) | data[i+1] as u32); i += 2; }
+    if i < data.len() { sum = sum.wrapping_add((data[i] as u32) << 8); }
+    while sum >> 16 != 0 { sum = (sum & 0xFFFF) + (sum >> 16); }
+    !(sum as u16)
+}
+
+unsafe fn parse_sockaddr(ptr: u64) -> Option<([u8; 4], u16)> {
+    if ptr == 0 || !user_buf_ok(ptr, 16) { return None; }
+    let fam = core::ptr::read_unaligned(ptr as *const u16);
+    if fam != 2 { return None; }
+    let port_be = core::ptr::read_unaligned((ptr + 2) as *const u16);
+    let ip = [
+        core::ptr::read_volatile((ptr + 4) as *const u8),
+        core::ptr::read_volatile((ptr + 5) as *const u8),
+        core::ptr::read_volatile((ptr + 6) as *const u8),
+        core::ptr::read_volatile((ptr + 7) as *const u8),
+    ];
+    Some((ip, u16::from_be(port_be)))
+}
+
+fn sys_socket(domain: u64, sock_type: u64, _protocol: u64) -> i64 {
+    if domain != 2 { return -93; }
+    if sock_type != 2 { return -93; }
+    match unsafe { crate::vfs::socket_create() } {
+        Some(fd) => fd as i64,
+        None => -24,
+    }
+}
+
+fn sys_bind(fd: u64, addr: u64, _len: u64) -> i64 {
+    match unsafe { parse_sockaddr(addr) } {
+        Some((_ip, port)) => if unsafe { crate::vfs::socket_bind(fd as usize, port) } { 0 } else { -9 },
+        None => -22,
+    }
+}
+
+fn sys_connect(fd: u64, addr: u64, _len: u64) -> i64 {
+    match unsafe { parse_sockaddr(addr) } {
+        Some((ip, port)) => if unsafe { crate::vfs::socket_connect(fd as usize, ip, port) } { 0 } else { -9 },
+        None => -22,
+    }
+}
+
+fn sys_listen(_fd: u64, _backlog: u64) -> i64 { 0 }
+fn sys_setsockopt(_fd: u64, _level: u64, _name: u64, _optval: u64, _optlen: u64) -> i64 { 0 }
+fn sys_getsockopt(_fd: u64, _level: u64, _name: u64, _optval: u64, _optlen: u64) -> i64 { -95 }
+
+fn sys_sendto(fd: u64, buf: u64, len: u64, _flags: u64, dest: u64, _destlen: u64) -> i64 {
+    if !unsafe { crate::vfs::socket_fd_ok(fd as usize) } { return -9; }
+    if buf == 0 || !user_buf_ok(buf, len) { return -14; }
+    let (dst_ip, dst_port) = if dest != 0 {
+        match unsafe { parse_sockaddr(dest) } { Some(v) => v, None => return -22 }
+    } else {
+        match unsafe { crate::vfs::socket_peer(fd as usize) } { Some(v) => v, None => return -107 }
+    };
+    let src_port = unsafe { crate::vfs::socket_local_port(fd as usize) };
+    let src_mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+    let src_ip = [10, 0, 2, 15];
+    let dst_mac = match unsafe { crate::net::virtio_net::arp_resolve(dst_ip, 100) } {
+        Some(m) => m,
+        None => return -113,
+    };
+    let payload_len = len as usize;
+    let udp_len = (8 + payload_len) as u16;
+    let total_len = (20 + udp_len as usize) as u16;
+    let frame_len = 14 + total_len as usize;
+    if frame_len > 2048 { return -90; }
+    let mut frame = [0u8; 2048];
+    frame[0..6].copy_from_slice(&dst_mac);
+    frame[6..12].copy_from_slice(&src_mac);
+    frame[12..14].copy_from_slice(&[0x08, 0x00]);
+    let o = 14;
+    frame[o] = 0x45; frame[o+1] = 0;
+    frame[o+2] = (total_len >> 8) as u8; frame[o+3] = (total_len & 0xFF) as u8;
+    frame[o+4] = 0; frame[o+5] = 1;
+    frame[o+8] = 64; frame[o+9] = 17;
+    frame[o+12..o+16].copy_from_slice(&src_ip);
+    frame[o+16..o+20].copy_from_slice(&dst_ip);
+    let ck = cksum(&frame[o..o+20]);
+    frame[o+10] = (ck >> 8) as u8; frame[o+11] = (ck & 0xFF) as u8;
+    let u = o + 20;
+    frame[u..u+2].copy_from_slice(&src_port.to_be_bytes());
+    frame[u+2..u+4].copy_from_slice(&dst_port.to_be_bytes());
+    frame[u+4..u+6].copy_from_slice(&udp_len.to_be_bytes());
+    frame[u+6..u+8].copy_from_slice(&[0, 0]);
+    unsafe { core::ptr::copy_nonoverlapping(buf as *const u8, frame.as_mut_ptr().add(u+8), payload_len) };
+    let sent = unsafe { crate::net::virtio_net::send(&frame[..frame_len]) };
+    if sent == 0 { return -101; }
+    payload_len as i64
+}
+
+fn sys_recvfrom(fd: u64, buf: u64, len: u64, _flags: u64, src: u64, srclen: u64) -> i64 {
+    if !unsafe { crate::vfs::socket_fd_ok(fd as usize) } { return -9; }
+    if buf == 0 || !user_buf_ok(buf, len) { return -14; }
+    let my_port = unsafe { crate::vfs::socket_local_port(fd as usize) };
+    let mut rbuf = [0u8; 2048];
+    for _ in 0..200 {
+        let got = unsafe { crate::net::virtio_net::recv(&mut rbuf) };
+        if got >= 42 && rbuf[12..14] == [0x08, 0x00] && rbuf[14] >> 4 == 4 && rbuf[14 + 9] == 17 {
+            let ihl = (rbuf[14] & 0x0F) as usize * 4;
+            let u = 14 + ihl;
+            if u + 8 <= got && got >= u + 8 {
+                let dport = u16::from_be_bytes([rbuf[u+2], rbuf[u+3]]);
+                if dport == my_port {
+                    let sport = u16::from_be_bytes([rbuf[u], rbuf[u+1]]);
+                    let payload = &rbuf[u+8..got];
+                    unsafe { crate::vfs::socket_queue(fd as usize, [rbuf[14+12], rbuf[14+13], rbuf[14+14], rbuf[14+15]], sport, payload) };
+                    break;
+                }
+            }
+        }
+    }
+    let n = unsafe { crate::vfs::socket_take(fd as usize, buf as *mut u8, len as usize) };
+    if n == 0 { return -11; }
+    if src != 0 && srclen >= 16 {
+        unsafe {
+            if let Some((ip, port, _)) = crate::vfs::socket_rx_info(fd as usize) {
+                core::ptr::write_unaligned(src as *mut u16, 2u16);
+                core::ptr::write_unaligned((src + 2) as *mut u16, port.to_be());
+                core::ptr::copy_nonoverlapping(ip.as_ptr(), (src + 4) as *mut u8, 4);
+                core::ptr::write_bytes((src + 8) as *mut u8, 0, 8);
+            }
+        }
+    }
+    n as i64
+}
+
 /// sys_getpid() — retourne le PID courant.
 fn sys_getpid() -> i64 {
     unsafe { core::ptr::read_volatile(core::ptr::addr_of!(CURRENT_PID)) as i64 }
@@ -1765,6 +1913,19 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_TIMERFD_CREATE => sys_timerfd_create(arg1, arg2),
         SYS_TIMERFD_SETTIME => sys_timerfd_settime(arg1, arg2, arg3, arg4),
         SYS_TIMERFD_GETTIME => { if arg2 != 0 && user_buf_ok(arg2, 32) { unsafe { core::ptr::write_bytes(arg2 as *mut u8, 0, 32) }; } 0 },
+        SYS_SOCKET => sys_socket(arg1, arg2, arg3),
+        SYS_BIND => sys_bind(arg1, arg2, arg3),
+        SYS_CONNECT => sys_connect(arg1, arg2, arg3),
+        SYS_LISTEN => sys_listen(arg1, arg2),
+        SYS_SETSOCKOPT => sys_setsockopt(arg1, arg2, arg3, arg4, arg5),
+        SYS_GETSOCKOPT => sys_getsockopt(arg1, arg2, arg3, arg4, arg5),
+        SYS_SENDTO => sys_sendto(arg1, arg2, arg3, arg4, arg5, arg6),
+        SYS_RECVFROM => sys_recvfrom(arg1, arg2, arg3, arg4, arg5, arg6),
+        SYS_SENDMSG => sys_sendto(arg1, 0, 0, 0, 0, 0),
+        SYS_RECVMSG => sys_recvfrom(arg1, 0, 0, 0, 0, 0),
+        SYS_SOCKETPAIR => -93,
+        SYS_ACCEPT => -95,
+        SYS_ACCEPT4 => -95,
         SYS_EXECVE => sys_execve(arg1, arg2, arg3),
         SYS_WAIT4 => sys_wait4(arg1 as i64, arg2, arg3),
         SYS_GETCWD => sys_getcwd(arg1 as u64, arg2 as u64),

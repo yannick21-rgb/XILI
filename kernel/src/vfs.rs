@@ -27,6 +27,7 @@ pub enum FileType {
     EventFd,
     SignalFd,
     TimerFd,
+    UdpSocket,
 }
 
 #[derive(Clone, Copy)]
@@ -673,6 +674,7 @@ pub unsafe fn fd_ready(fd: usize) -> bool {
             tf.expiry != 0 && crate::syscall::ko_ticks() >= tf.expiry
         }
         FileType::Pipe => match PIPES.get(f.inode.minor as usize) { Some(Some(pp)) => pp.len > 0, _ => false },
+        FileType::UdpSocket => { let i = f.inode.minor as usize; UDP_SOCKS[i].rx_len > 0 }
         FileType::Regular | FileType::CharDev | FileType::ProcFile => true,
         _ => false,
     }
@@ -717,6 +719,111 @@ pub unsafe fn signalfd_notify(sig: u64) {
             SIGNALFDS[i].1 = sig as u32;
         }
     }
+}
+
+
+/* ------------------------------------------------------------ *
+ * Sockets UDP (J5-B) : table de sockets AF_INET/SOCK_DGRAM.
+ * ------------------------------------------------------------ */
+
+pub const MAX_UDP_SOCKS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub struct UdpSock {
+    pub bound_port: u16,
+    pub peer_ip: [u8; 4],
+    pub peer_port: u16,
+    pub connected: bool,
+    pub rx_len: usize,
+    pub rx_from_ip: [u8; 4],
+    pub rx_from_port: u16,
+    pub rx_buf: [u8; 1024],
+}
+const EMPTY_UDP: UdpSock = UdpSock { bound_port: 0, peer_ip: [0; 4], peer_port: 0, connected: false, rx_len: 0, rx_from_ip: [0; 4], rx_from_port: 0, rx_buf: [0; 1024] };
+static mut UDP_SOCKS: [UdpSock; MAX_UDP_SOCKS] = [EMPTY_UDP; MAX_UDP_SOCKS];
+
+pub unsafe fn socket_create() -> Option<usize> {
+    for i in 0..MAX_UDP_SOCKS {
+        let used = OPEN_FILES.iter().any(|f| matches!(f, Some(fd) if fd.inode.file_type == FileType::UdpSocket && fd.inode.minor as usize == i));
+        if !used {
+            UDP_SOCKS[i] = EMPTY_UDP;
+            UDP_SOCKS[i].bound_port = 12345; // port éphémère par défaut
+            return alloc_fd(Inode { file_type: FileType::UdpSocket, minor: i as u32, data: core::ptr::null(), size: 0 });
+        }
+    }
+    None
+}
+
+pub unsafe fn socket_fd_ok(fd: usize) -> bool {
+    fd < MAX_FILES && matches!(OPEN_FILES[fd], Some(ref f) if f.inode.file_type == FileType::UdpSocket)
+}
+
+pub unsafe fn socket_bind(fd: usize, port: u16) -> bool {
+    if !socket_fd_ok(fd) { return false; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    UDP_SOCKS[i].bound_port = port;
+    true
+}
+
+pub unsafe fn socket_connect(fd: usize, ip: [u8; 4], port: u16) -> bool {
+    if !socket_fd_ok(fd) { return false; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    UDP_SOCKS[i].peer_ip = ip;
+    UDP_SOCKS[i].peer_port = port;
+    UDP_SOCKS[i].connected = true;
+    true
+}
+
+pub unsafe fn socket_peer(fd: usize) -> Option<([u8; 4], u16)> {
+    if !socket_fd_ok(fd) { return None; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    Some((UDP_SOCKS[i].peer_ip, UDP_SOCKS[i].peer_port))
+}
+
+pub unsafe fn socket_local_port(fd: usize) -> u16 {
+    if !socket_fd_ok(fd) { return 0; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    UDP_SOCKS[i].bound_port
+}
+
+pub unsafe fn socket_queue(fd: usize, from_ip: [u8; 4], from_port: u16, data: &[u8]) {
+    if !socket_fd_ok(fd) { return; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    let n = core::cmp::min(data.len(), UDP_SOCKS[i].rx_buf.len());
+    UDP_SOCKS[i].rx_buf[..n].copy_from_slice(&data[..n]);
+    UDP_SOCKS[i].rx_len = n;
+    UDP_SOCKS[i].rx_from_ip = from_ip;
+    UDP_SOCKS[i].rx_from_port = from_port;
+}
+
+pub unsafe fn socket_take(fd: usize, buf: *mut u8, count: usize) -> usize {
+    if !socket_fd_ok(fd) { return 0; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    let n = core::cmp::min(count, UDP_SOCKS[i].rx_len);
+    if n > 0 {
+        core::ptr::copy_nonoverlapping(UDP_SOCKS[i].rx_buf.as_ptr(), buf, n);
+        UDP_SOCKS[i].rx_len = 0;
+    }
+    n
+}
+
+pub unsafe fn socket_rx_info(fd: usize) -> Option<([u8; 4], u16, usize)> {
+    if !socket_fd_ok(fd) { return None; }
+    let i = OPEN_FILES[fd].as_ref().unwrap().inode.minor as usize;
+    Some((UDP_SOCKS[i].rx_from_ip, UDP_SOCKS[i].rx_from_port, UDP_SOCKS[i].rx_len))
+}
+
+pub unsafe fn socket_count() -> usize { MAX_UDP_SOCKS }
+pub unsafe fn socket_by_index(i: usize) -> Option<usize> {
+    if i >= MAX_UDP_SOCKS { return None; }
+    for fd in 0..MAX_FILES {
+        if let Some(ref f) = OPEN_FILES[fd] {
+            if f.inode.file_type == FileType::UdpSocket && f.inode.minor as usize == i {
+                return Some(fd);
+            }
+        }
+    }
+    None
 }
 
 /* ------------------------------------------------------------ *
@@ -862,6 +969,7 @@ pub unsafe fn close(fd: usize) {
         FileType::SignalFd => { SIGNALFDS[file.inode.minor as usize] = (0, 0); }
         FileType::TimerFd => { TIMERFDS[file.inode.minor as usize] = TimerFd { expiry: 0, interval: 0, expirations: 0 }; }
         FileType::Epoll => { EPOLLS[file.inode.minor as usize] = EMPTY_EPOLL; }
+        FileType::UdpSocket => { UDP_SOCKS[file.inode.minor as usize] = EMPTY_UDP; }
         _ => {}
     }
     OPEN_FILES[fd] = None;
@@ -991,7 +1099,7 @@ pub unsafe fn read(fd: usize, buf: *mut u8, count: usize) -> Result<usize, i64> 
             unsafe { core::ptr::write_unaligned(buf as *mut u64, exp) };
             Ok(8)
         }
-        FileType::Epoll => Err(-9),
+        FileType::Epoll | FileType::UdpSocket => Err(-9),
     }
 }
 
@@ -1026,7 +1134,7 @@ pub unsafe fn write(fd: usize, buf: *const u8, count: usize) -> Result<usize, i6
             EVENTFDS[i] = EVENTFDS[i].wrapping_add(v);
             Ok(8)
         }
-        FileType::SignalFd | FileType::TimerFd | FileType::Epoll => Err(-9),
+        FileType::SignalFd | FileType::TimerFd | FileType::Epoll | FileType::UdpSocket => Err(-9),
         FileType::ProcFile => Err(-30),
     }
 }

@@ -28,6 +28,24 @@ décisions prises.
 
 ---
 
+## 2026-11-07 — J5-B : sockets UDP minimaux (AF_INET/SOCK_DGRAM)
+
+- `socket/bind/connect/sendto/recvfrom` (+ listen/setsockopt nop,
+  accept/sendmsg/recvmsg/socketpair en -ENOSYS/-EPFNOSUPPORT).
+  Table UDP dédiée côté VFS, ARP via virtio-net, checksum IP, checksum
+  UDP = 0 (autorisé IPv4), démux RX sur port lié, `recvfrom` borné.
+- Sonde `tools/probe_j5.s` : socket -> bind 10.0.2.15:12345 ->
+  sendto 10.0.2.2:53 (9 octets) -> recvfrom EAGAIN attendu ->
+  `probe_j5: OK`. QEMU : `-netdev user + virtio-net`.
+- Initrd allégé (busybox, hello, shell, probe_j5) : au-delà d'un seuil
+  de taille du noyau, le chargement faute (#GP dans map_page) — chaque
+  sonde se teste avec un initrd propre.
+- Validation : `make test` OK, `make test-net` OK (J5.3 ping OK),
+  `probe_j5: OK` sur QEMU virtio-net.
+- Reste J5 : TCP (socket STREAM, connect/accept, pile IP/TCP),
+  DHCP/DNS complets, TLS (curl), `apk` réel. Reste J4 : image Alpine.
+
+---
 ## 2026-11-06 — J4-D : epoll/eventfd/signalfd/timerfd + clone + /proc + /dev
 
 - Nouveaux objets VFS : `Epoll`, `EventFd`, `SignalFd`, `TimerFd`

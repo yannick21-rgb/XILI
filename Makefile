@@ -123,6 +123,17 @@ test: iso
 	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + shell/J4.1)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
+# J6 : stockage IDE + ext2 — le disque ext2 de test doit contenir
+# hello.txt dont le contenu est lu par le noyau au boot.
+test-storage: iso
+	@if [ ! -f /tmp/xili-disk.img ]; then dd if=/dev/zero of=/tmp/xili-disk.img bs=1M count=16 2>/dev/null && mkfs.ext2 -q /tmp/xili-disk.img && echo "hello from ext2 disk" > /tmp/hello.txt && echo "write /tmp/hello.txt hello.txt" | debugfs -w /tmp/xili-disk.img 2>/dev/null; fi
+	@timeout 70 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot -drive format=raw,file=/tmp/xili-disk.img,if=ide,index=0 > $(LOG) 2>&1 || true
+	@grep -q "J6.1: IDE OK" $(LOG) \
+	  && grep -q "J6.2: ext2 OK" $(LOG) \
+	  && grep -q "hello from ext2 disk" $(LOG) \
+	  && echo "TEST OK — J6 stockage IDE + ext2" \
+	  || (echo "TEST ECHEC (J6)"; grep -a "J6\|ext2:" $(LOG) | head -20; exit 1)
+
 test-net: iso
 	@timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -nographic -no-reboot \
 		-netdev user,id=net0 -device virtio-net,netdev=net0 > $(LOG) 2>&1 || true

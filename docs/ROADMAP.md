@@ -250,7 +250,15 @@ J1: noyau charge, mode long actif, console OK.
 
 ---
 
-## J6 — Stockage robuste ⬜
+## J6 — Stockage robuste 🔄
+
+**J6-A (2026-11-07) — IDE + ext2 lecture** ✅
+- Driver IDE legacy (READ/WRITE SECTORS, détection 0xFF), ext2 lecture
+  (superblock, inodes, répertoires, fichiers directs + indirect simple).
+- Câblage boot J6.0/J6.1/J6.2 + cible `make test-storage`
+  (image 16 Mio, hello.txt -> contenu lu au boot).
+- Reste : AHCI, ext2 écriture, ext4, snapshots, swap.
+
 
 **Objectif** : ne pas perdre de données.
 

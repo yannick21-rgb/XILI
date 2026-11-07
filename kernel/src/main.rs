@@ -30,6 +30,7 @@ mod irq;
 mod mbi;
 mod mm;
 mod net;
+mod storage;
 mod pic;
 mod runtime;
 mod serial;
@@ -400,6 +401,29 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         }
     } else {
         console::print(format_args!("J5.1: virtio-net absent (QEMU sans -net ?)\n"));
+    }
+
+    // J6 : stockage IDE legacy + ext2 (lecture seule + création test).
+    console::print(format_args!("J6.0: storage pret\n"));
+    let _storage_ok = unsafe { crate::storage::ide::init() };
+    if _storage_ok {
+        console::print(format_args!("J6.1: IDE OK\n"));
+        let ext2_ok = unsafe { crate::storage::ext2::init() };
+        if ext2_ok {
+            console::print(format_args!("J6.2: ext2 OK\n"));
+            unsafe { crate::storage::ext2::list_dir(2) };
+            let mut fbuf = [0u8; 64];
+            let n = unsafe { crate::storage::ext2::read_file(12, &mut fbuf) };
+            crate::console::print(format_args!("ext2: hello.txt ({} octets): ", n));
+            for i in 0..n {
+                crate::serial::write_byte(fbuf[i]);
+            }
+            crate::serial::write_byte(b'\n');
+        } else {
+            console::print(format_args!("J6.2: ext2 echec\n"));
+        }
+    } else {
+        console::print(format_args!("J6.1: IDE absent\n"));
     }
 
     unsafe { crate::syscall::set_current_exe(b"shell.elf") };

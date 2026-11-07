@@ -28,6 +28,24 @@ décisions prises.
 
 ---
 
+## 2026-11-07 — J6-A : stockage IDE + ext2 (lecture)
+
+- Driver IDE legacy (ports 0x1F0-0x1F7, READ/WRITE SECTORS) : détection
+  présence (status 0xFF = absent), lecture/écriture de secteurs.
+  `ide.rs` silencieux par secteur (log exploitable).
+- ext2 lecture : superblock (magic 0xEF53), table d'inodes, listage de
+  répertoire, lecture de fichier (blocs directs + indirect simple).
+  Bug corrigé : buffer GDT 1024 -> 4096 octets (blocs de 4 Kio).
+- Câblage noyau : `mod storage`, init après J5 (J6.0/J6.1/J6.2), lecture
+  de `hello.txt` (inode 12) au boot si ext2 présent.
+- Cible `make test-storage` : QEMU `-drive if=ide,index=0` sur image
+  ext2 16 Mio (mkfs.ext2 + debugfs, hello.txt inode 12) -> `J6.2: ext2 OK`
+  + contenu lu `hello from ext2 disk`. Sans disque : J6.2 échec propre,
+  boot normal (`make test` OK).
+- Reste J6 : AHCI (`ahci.rs` présent, non câblé), ext2 écriture
+  (`ext2_write.rs` présent, non câblé), ext4, snapshots, swap.
+
+---
 ## 2026-11-07 — J5-B : sockets UDP minimaux (AF_INET/SOCK_DGRAM)
 
 - `socket/bind/connect/sendto/recvfrom` (+ listen/setsockopt nop,

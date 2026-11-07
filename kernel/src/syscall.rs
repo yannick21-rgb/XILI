@@ -103,6 +103,11 @@ const SYS_MPROTECT: u64 = 10;
 const SYS_MUNMAP: u64 = 11;
 const SYS_UNAME: u64 = 63;
 const SYS_GETDENTS64: u64 = 217;
+const SYS_ARCH_PRCTL: u64 = 158;
+const SYS_PRCTL: u64 = 157;
+const SYS_SET_TID_ADDRESS: u64 = 218;
+const SYS_SET_ROBUST_LIST: u64 = 273;
+const SYS_GET_ROBUST_LIST: u64 = 274;
 const SYS_FUTEX: u64 = 202;
 const SYS_IOCTL: u64 = 16;
 const SYS_RT_SIGACTION: u64 = 13;
@@ -1065,6 +1070,96 @@ fn sys_uname(buf: u64) -> i64 {
     0
 }
 
+/// sys_arch_prctl(code, addr) — manipule les registres FS/GS de l'utilisateur.
+///
+/// ARCH_SET_FS (0x1002) : écrit MSR_FS_BASE.
+/// ARCH_GET_FS (0x1003) : lit MSR_FS_BASE.
+/// ARCH_SET_GS (0x1001) : écrit MSR_GS_BASE.
+/// ARCH_GET_GS (0x1004) : lit MSR_GS_BASE.
+const ARCH_SET_GS: u64 = 0x1001;
+const ARCH_SET_FS: u64 = 0x1002;
+const ARCH_GET_FS: u64 = 0x1003;
+const ARCH_GET_GS: u64 = 0x1004;
+
+fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
+    match code {
+        ARCH_SET_FS => {
+            unsafe { wrmsr(0xC000_0100, addr) };
+            0
+        }
+        ARCH_GET_FS => {
+            if addr == 0 || !user_buf_ok(addr, 8) {
+                return -14; // -EFAULT
+            }
+            let val = unsafe { rdmsr(0xC000_0100) };
+            unsafe { core::ptr::write_volatile(addr as *mut u64, val) };
+            0
+        }
+        ARCH_SET_GS => {
+            unsafe { wrmsr(0xC000_0101, addr) };
+            0
+        }
+        ARCH_GET_GS => {
+            if addr == 0 || !user_buf_ok(addr, 8) {
+                return -14;
+            }
+            let val = unsafe { rdmsr(0xC000_0101) };
+            unsafe { core::ptr::write_volatile(addr as *mut u64, val) };
+            0
+        }
+        _ => -22, // -EINVAL
+    }
+}
+
+/// sys_prctl(option, arg2, arg3, arg4, arg5) — contrôle de processus.
+fn sys_prctl(option: u64, arg2: u64, arg3: u64, _arg4: u64, _arg5: u64) -> i64 {
+    match option {
+        15 => {
+            // PR_SET_NAME : fixe le nom du thread (16 octets max).
+            if arg2 == 0 || !user_buf_ok(arg2, 16) {
+                return -14; // -EFAULT
+            }
+            0
+        }
+        16 => {
+            // PR_GET_NAME : lit le nom du thread.
+            if arg2 == 0 || !user_buf_ok(arg2, 16) {
+                return -14;
+            }
+            unsafe { core::ptr::write_bytes(arg2 as *mut u8, 0, 16) };
+            0
+        }
+        1 => 0, // PR_CAPBSET_READ (stub)
+        2 => 0, // PR_CAPBSET_DROP (stub)
+        3 => 0, // PR_SET_KEEPCAPS (stub)
+        4 => 0, // PR_GET_KEEPCAPS (stub)
+        _ => 0, // accepter silencieusement les autres
+    }
+}
+
+/// sys_set_tid_address(tidptr) — enregistre l'adresse clear_child_tid.
+fn sys_set_tid_address(tidptr: u64) -> i64 {
+    // On stocke l'adresse (non utilisée pour l'instant, pas de threads).
+    // Retourne le TID (= PID en modèle mono-tâche).
+    let _ = tidptr;
+    current_pid() as i64
+}
+
+/// sys_set_robust_list(head, len) — enregistre la liste robuste de futex.
+fn sys_set_robust_list(_head: u64, _len: u64) -> i64 {
+    0 // accepté sans effet
+}
+
+/// sys_get_robust_list(pid, head_ptr, len_ptr) — lit la liste robuste.
+fn sys_get_robust_list(_pid: i64, head_ptr: u64, len_ptr: u64) -> i64 {
+    if head_ptr != 0 && user_buf_ok(head_ptr, 8) {
+        unsafe { core::ptr::write_volatile(head_ptr as *mut u64, 0) };
+    }
+    if len_ptr != 0 && user_buf_ok(len_ptr, 8) {
+        unsafe { core::ptr::write_volatile(len_ptr as *mut u64, 0) };
+    }
+    0
+}
 /// sys_getdents64(fd, buf, count) — lit des entrées de répertoire.
 fn sys_getdents64(fd: u64, buf: u64, count: u64) -> i64 {
     if fd as usize >= MAX_FD {
@@ -1941,6 +2036,11 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_MUNMAP => sys_munmap(arg1, arg2),
         SYS_UNAME => sys_uname(arg1),
         SYS_GETDENTS64 => sys_getdents64(arg1, arg2, arg3),
+        SYS_ARCH_PRCTL => sys_arch_prctl(arg1, arg2),
+        SYS_PRCTL => sys_prctl(arg1, arg2, arg3, arg4, arg5),
+        SYS_SET_TID_ADDRESS => sys_set_tid_address(arg1),
+        SYS_SET_ROBUST_LIST => sys_set_robust_list(arg1, arg2),
+        SYS_GET_ROBUST_LIST => sys_get_robust_list(arg1 as i64, arg2, arg3),
         SYS_FUTEX => sys_futex(arg1, arg2 as u32, arg3 as u32, arg4, arg5, arg6 as u32),
         SYS_IOCTL => sys_ioctl(arg1, arg2, arg3),
         SYS_RT_SIGACTION => sys_rt_sigaction(arg1, arg2, arg3),

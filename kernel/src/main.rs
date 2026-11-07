@@ -419,11 +419,20 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
                 crate::serial::write_byte(fbuf[i]);
             }
             crate::serial::write_byte(b'\n');
+            // J6-B : ext2 écriture non câblée au boot (WIP, allocateur à fiabiliser).
         } else {
             console::print(format_args!("J6.2: ext2 echec\n"));
         }
     } else {
         console::print(format_args!("J6.1: IDE absent\n"));
+    }
+
+    // J6-B : AHCI (SATA) — test si contrôleur + device présents.
+    let _ahci_ok = unsafe { crate::storage::ahci::init() };
+    if _ahci_ok {
+        console::print(format_args!("J6.3: AHCI OK\n"));
+    } else {
+        console::print(format_args!("J6.3: AHCI absent\n"));
     }
 
     unsafe { crate::syscall::set_current_exe(b"shell.elf") };

@@ -28,6 +28,24 @@ décisions prises.
 
 ---
 
+## 2026-11-07 — J6-B : AHCI init + fsync + ext2_write (WIP)
+
+- AHCI : `ahci::init` câblé au boot (J6.3). Sans device : absent propre.
+  Avec ich9-ahci + ide-hd : CAP/PI/VS lus, port 0 SSTS=0x113 SIG=0x101,
+  CLB/FIS initialisés -> `J6.3: AHCI OK`. Lecture de secteur AHCI non
+  câblée au boot (prints de debug retirés).
+- `fsync`/`fdatasync`/`sync` : syscalls 74/75/162 -> 0 (écritures
+  synchrones directes IDE/AHCI, durabilité inhérente).
+- `ext2_write::create_file` : code présent mais NON câblé au boot
+  (allocateur de blocs/inodes à fiabiliser avant usage réel).
+- Stack noyau : tampons ext2 passés en statiques (overflow constaté :
+  read_inode empilait 8 Kio + list_dir 4 Kio -> retour corrompu).
+- Validation : `make test` OK, `make test-net` OK (J5 ping),
+  `make test-storage` OK (J6 IDE + ext2, hello.txt lu).
+- Reste J6 : AHCI lecture testée de bout en bout, ext2 écriture,
+  ext4, snapshots, swap.
+
+---
 ## 2026-11-07 — J6-A : stockage IDE + ext2 (lecture)
 
 - Driver IDE legacy (ports 0x1F0-0x1F7, READ/WRITE SECTORS) : détection

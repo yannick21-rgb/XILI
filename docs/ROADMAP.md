@@ -259,6 +259,12 @@ J1: noyau charge, mode long actif, console OK.
   (image 16 Mio, hello.txt -> contenu lu au boot).
 - Reste : AHCI, ext2 écriture, ext4, snapshots, swap.
 
+**J6-B (2026-11-07) — AHCI init + fsync** ✅
+- AHCI câblé au boot (J6.3) : ich9-ahci détecté (SSTS/SIG), CLB/FIS OK.
+- `fsync`/`fdatasync`/`sync` -> 0 (écritures synchrones directes).
+- Tampons ext2 en statiques (fix stack overflow noyau).
+- Reste : AHCI lecture bout en bout, ext2 écriture, ext4, snapshots, swap.
+
 
 **Objectif** : ne pas perdre de données.
 

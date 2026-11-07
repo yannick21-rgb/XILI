@@ -305,34 +305,10 @@ pub unsafe fn read_sector(lba: u64, buf: &mut [u8; 512]) -> bool {
     }
 
     let serr = mmio_read(port_base + PORT_SERR);
-    crate::console::print(format_args!("ahci: CI=0x{:x} TFD=0x{:x} IS=0x{:x} SERR=0x{:x}\n", ci, tfd, is, serr));
-    crate::console::print(format_args!("ahci: CMD_LIST=0x{:x} FIS_BASE=0x{:x} CMD_TABLE=0x{:x} DATA_BUF=0x{:x}\n", CMD_LIST, FIS_BASE, CMD_TABLE, DATA_BUF));
-    // Dump CFIS
-    let cfis = CMD_TABLE as *const u8;
-    crate::console::print(format_args!("ahci: CFIS[0..20]={:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n",
-        *cfis, *cfis.add(1), *cfis.add(2), *cfis.add(3), *cfis.add(4), *cfis.add(5),
-        *cfis.add(6), *cfis.add(7), *cfis.add(8), *cfis.add(9), *cfis.add(10),
-        *cfis.add(11), *cfis.add(12), *cfis.add(13), *cfis.add(14), *cfis.add(15),
-        *cfis.add(16), *cfis.add(17), *cfis.add(18), *cfis.add(19)));
-    // Dump PRDT
-    let prdt = (CMD_TABLE + 0x80) as *const u8;
-    crate::console::print(format_args!("ahci: PRDT[0..16]={:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}\n",
-        *prdt, *prdt.add(1), *prdt.add(2), *prdt.add(3), *prdt.add(4), *prdt.add(5),
-        *prdt.add(6), *prdt.add(7), *prdt.add(8), *prdt.add(9), *prdt.add(10),
-        *prdt.add(11), *prdt.add(12), *prdt.add(13), *prdt.add(14), *prdt.add(15)));
-    // Dump first 16 bytes of DATA_BUF
-    crate::console::print(format_args!("ahci: DATA_BUF[0..4]={:02x} {:02x} {:02x} {:02x}\n",
-        *(DATA_BUF as *const u8), *(DATA_BUF as *const u8).add(1),
-        *(DATA_BUF as *const u8).add(2), *(DATA_BUF as *const u8).add(3)));
 
     // Copier les données
     core::ptr::copy_nonoverlapping(DATA_BUF as *const u8, buf.as_mut_ptr(), 512);
 
-    crate::console::print(format_args!(
-        "ahci: secteur {} lu (premiers octets: {:02x} {:02x} {:02x} {:02x})
-",
-        lba, buf[0], buf[1], buf[2], buf[3]
-    ));
     true
 }
 

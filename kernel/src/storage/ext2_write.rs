@@ -54,7 +54,7 @@ unsafe fn write_block(block_num: u32, buf: &[u8]) -> bool {
 unsafe fn alloc_block() -> u32 {
     // Block bitmap is in group 0
     // Need group descriptor to find bitmap block
-    let mut gd_buf = [0u8; 1024];
+    let mut gd_buf = [0u8; 4096];
     let gd_block = ext2::FIRST_DATA_BLOCK + 1;
     if !read_block(gd_block, &mut gd_buf) { return 0; }
 
@@ -64,7 +64,7 @@ unsafe fn alloc_block() -> u32 {
     let bitmap = unsafe { &mut BITMAP };
     if !read_block(block_bitmap_block, bitmap) { return 0; }
 
-    let total_blocks = 8192u32; // from superblock
+    let total_blocks = ext2::TOTAL_BLOCKS; // depuis le superblock
     for i in ext2::FIRST_DATA_BLOCK as usize..total_blocks as usize {
         let byte = i / 8;
         let bit = i % 8;
@@ -86,7 +86,7 @@ unsafe fn alloc_block() -> u32 {
 
 /// Trouve un inode libre. Retourne le numéro d'inode ou 0.
 unsafe fn alloc_inode() -> u32 {
-    let mut gd_buf = [0u8; 1024];
+    let mut gd_buf = [0u8; 4096];
     let gd_block = ext2::FIRST_DATA_BLOCK + 1;
     if !read_block(gd_block, &mut gd_buf) { return 0; }
 
@@ -164,7 +164,7 @@ pub unsafe fn create_file(name: &[u8], data: &[u8]) -> u32 {
 
     // Write inode to disk
     // Find inode table block
-    static mut GD_BUF3: [u8; 1024] = [0u8; 1024];
+    static mut GD_BUF3: [u8; 4096] = [0u8; 4096];
     let gd_buf = unsafe { &mut GD_BUF3 };
     let gd_block = ext2::FIRST_DATA_BLOCK + 1;
     if !read_block(gd_block, gd_buf) { return 0; }

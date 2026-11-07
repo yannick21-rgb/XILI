@@ -111,6 +111,9 @@ const SYS_KILL: u64 = 62;
 const SYS_TGKILL: u64 = 234;
 const SYS_GETRANDOM: u64 = 318;
 const SYS_MEMFD_CREATE: u64 = 319;
+const SYS_FSYNC: u64 = 74;
+const SYS_FDATASYNC: u64 = 75;
+const SYS_SYNC: u64 = 162;
 const SYS_CLONE: u64 = 56;
 const SYS_EPOLL_WAIT: u64 = 232;
 const SYS_EPOLL_CTL: u64 = 233;
@@ -1946,6 +1949,12 @@ pub extern "C" fn handle_syscall(gpr_ptr: u64) {
         SYS_TGKILL => sys_tgkill(arg1, arg2, arg3),
         SYS_GETRANDOM => sys_getrandom(arg1, arg2, arg3),
         SYS_MEMFD_CREATE => sys_memfd_create(arg1, arg2),
+        // fsync/fdatasync/sync : nos écritures disque sont synchrones
+        // (IDE/AHCI sans cache d'écriture côté noyau) -> durability
+        // inhérente, retour 0.
+        SYS_FSYNC => 0,
+        SYS_FDATASYNC => 0,
+        SYS_SYNC => 0,
         SYS_EXIT | SYS_EXIT_GROUP => {
             sys_exit(gpr_ptr, arg1)
         }

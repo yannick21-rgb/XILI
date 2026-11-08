@@ -18,7 +18,7 @@ Légende : ✅ fait · 🔄 en cours · ⬜ à faire
 | J4 | Alpine (userland complet) | 4–8 mois | 🔄 |
 | J5 | Réseau | 2–4 mois | ⬜ |
 | J6 | Stockage robuste | 2–4 mois | ⬜ |
-| J7 | Graphique + compositeur | 6–12 mois | ⬜ |
+| J7 | Graphique + compositeur | 6–12 mois | 🔄 |
 | J8 | Wine / Windows | 3–6 mois | ⬜ |
 | J9 | 32 bits / WoW64 | 2–4 mois | ⬜ |
 | J10 | Matériel réel + daily driver | 12–24 mois | ⬜ |
@@ -305,7 +305,7 @@ J1: noyau charge, mode long actif, console OK.
 
 ---
 
-## J7 — Graphique et compositeur ⬜
+## J7 — Graphique et compositeur 🔄
 
 **Objectif** : un bureau fluide.
 

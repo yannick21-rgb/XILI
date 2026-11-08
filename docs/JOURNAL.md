@@ -5,6 +5,26 @@ décisions prises.
 
 ---
 
+## 2026-11-08 — J7 : PS/2 — cause racine identifiée (I/O séquentielle)
+
+- `ps2::init()` reste un no-op dans le code committé (`make test` vert).
+  Investigation : une seule commande 8042 (ex. 0xAA) passe ; **deux commandes
+  séquentielles (0xAA puis 0xAB) font planter l'entrée en R3** (hang après
+  `execution en R3 via iretq...`, aucun `J4: shell pret`). Le cli/sti, le
+  masquage PIC (IRQ1/IRQ12) et le flush du tampon ne résolvent pas.
+- Cause probable : assertion d'IRQ par le contrôleur 8042 après la 2e
+  commande, qui déclenche une tempête d'interruptions au sti même masquée
+  (comportement QEMU-specific). À approfondir (config byte à 0 avant toute
+  commande, ou init différée hors du chemin de boot).
+- État J7 : framebuffer GOP/VBE (J7.1), contrôleur PS/2 détecté (self-test
+  0x55, ports OK) en expérimentation, curseur logiciel (J7-B2) câblé
+  conditionnellement. `make test` + `make test-uefi` verts.
+- Reste J7 : rendre l'init PS/2 sûre (une commande à la fois ou init
+  différée), evdev, compositeur, Wayland, Mesa llvmpipe, dma-buf.
+- Mise à jour : roadmap J7 ⬜→🔄 ; mémoire agent mise à jour.
+
+---
+
 ## 2026-11-06 — J5 : virtio-net — capacités PCI lues, blocage persiste
 
 > État : **J5 n'est pas terminé**. Le driver lit maintenant les capacités

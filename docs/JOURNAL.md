@@ -5,14 +5,52 @@ décisions prises.
 
 ---
 
-## 2026-11-08 — J7 : PS/2 réactivée — vraie cause = débordement BSS ELF
+## 2026-11-08 — J7-B1 : cause racine du no-op PS/2 = débordement BSS du chargeur ELF
 
-- **Cause racine** (pas le PS/2) : `elf.rs` zéroait le BSS avec `bss_start = page_vaddr + (filesz - page_idx*PAGE)` et `bss_len = PAGE - bss_offset`. Quand `p_vaddr` n'est pas aligné (0x403010), l'écriture allait jusqu'à 0x404010, soit la page physique voisine — qui, après le split de la grande page de 2 Mio, est la **table de pages** (phys 0x404000). `pt[0]`/`pt[1]` zéroés → entrée du shell (0x401000) non présente → #PF en R3 → #DF → triple fault. Les E/S du 8042 n'étaient qu'un déclencheur de calendrier.
-- **Correctif** : bornes page-alignées (`page_start`..`page_end` ∩ [seg_vaddr+filesz, seg_vaddr+memsz)).
-- **console.rs** : `print()` masque les IRQ pendant l'impression (atomique) pour éviter que le timer ne découpe les marqueurs.
-- **ps2.rs** : `init()` complète réactivée (self-test 0x55, clavier + souris détectés). `marker()` helper pour sortie atomique.
-- **Makefile** : gates J7.2/J7.3 (self-test, clavier, souris, init end) en BIOS et UEFI.
-- `make test` BIOS + UEFI verts. PS/2 clavier/souris détectés au boot.
+- **Symptôme** : `ps2::init()` complet (self-test 0x55, ports 0xAB/0xA9,
+  0xD4/0xF4, unmask IRQ12, config byte) empêchait shell.elf de démarrer ;
+  la mise en no-op (commits `76172ca` → `29b79c0`) « réparait » le boot.
+  Root cause inconnue à l'époque.
+- **Diagnostic** (`qemu -d int,cpu_reset`, reproductible 3/3) : `#PF`
+  `v=0e e=0014` (fetch, page non présente, CPL 3) sur `0x401000` (l'entrée
+  du shell) juste après l'`iretq`, puis `#DF` (CR2 = champ RSP0 du TSS) →
+  triple fault. L'échec est **entre** l'`iretq` et la 1ʳᵉ instruction
+  utilisateur — jamais dans un handler IRQ.
+- **Instrumentation** : `paging::debug_walk()` marche la table **active**
+  (départ CR3 = `0x3fa000`) et imprime chaque niveau. Elle montre
+  `pt[1] = 0` **immédiatement après** `load_elf`, alors que `pt[2]`/`pt[3]`
+  sont corrects.
+- **Cause racine** : le segment `.bss` de shell.elf a `p_vaddr = 0x403010`
+  (non aligné). L'ancien calcul du BSS (`bss_len = PAGE_SIZE - offset`)
+  écrivait `write_bytes(0x403010, 0, 0x1000)`, soit **jusqu'à 0x404010** :
+ 16 octets au-delà de la frontière de page, exactement dans la table de
+  pages allouée en phys `0x404000` par le split de la grande page de
+  2 Mio. `pt[0]`/`pt[1]` étaient zéroés → page d'entrée du shell non
+  présente.
+- **Correctif** (`kernel/src/elf.rs`) : la zone à zeroter est bornée à la
+  page courante : `[max(seg_vaddr+filesz, page_start),
+  min(seg_vaddr+memsz, page_end)]`. Aucun débordement possible.
+- **Le PS/2 n'était qu'un déclencheur de calendrier** (bissection) : zéro
+  E/S → OK ; delay pur → OK ; lectures seules → OK ; `0xAD` seul → OK ;
+  `0xA7` seul → OK ; `0xAD`+`0xA7` → KO (dose d'E/S, pas commande précise).
+- **Fausses pistes éliminées** : `entry_ring3` pousse `RFLAGS = 0x0` →
+  IF=0 en ring3, aucune IRQ jamais délivrée (théorie IRQ12 écartée) ;
+  `unmask(12)` et le config byte coupés sans effet ; `paging::translate()`
+  est faux (il part de la PML4 **statique**, pas de CR3) et rend `None`
+  même en configuration OK — d'où `debug_walk()`.
+- `kernel/src/ps2.rs` : `init()` rétabli **en entier** (doc de tête
+  réécrite), marqueurs J7.2/J7.3 conservés.
+- `kernel/src/console.rs` : `print()` est désormais **atomique**
+  (pushfq/cli/print/popfq) — le tick « T » nu (100 Hz) et les workers
+  « H. »/« L »/« M » découpaient les lignes en milieu de chaîne
+  (« J3T.HTLTMT.HT.5: chargement… »), ce qui faisait échouer les gates au
+  hasard. Le bruit reste présent **entre** les lignes, plus dedans.
+- `Makefile` : gates J7.2/J7.3 (self-test 0x55, clavier, souris, init end)
+  sur `test`, `test-uefi` ISO et ESP.
+- Vérifié : `make test` **×3 OK**, `make test-uefi` **ISO + ESP OK**.
+- Reste : curseur logiciel en mode graphique (IRQ12 → `handle_mouse` →
+  `mouse_byte` → `cursor_move` est câblé, actif seulement si
+  `fb::is_ready()`), evdev.
 
 ---
 
@@ -25,8 +63,9 @@ décisions prises.
   masquage PIC (IRQ1/IRQ12) et le flush du tampon ne résolvent pas.
 - Cause probable : assertion d'IRQ par le contrôleur 8042 après la 2e
   commande, qui déclenche une tempête d'interruptions au sti même masquée
-  (comportement QEMU-specific). À approfondir (config byte à 0 avant toute
-  commande, ou init différée hors du chemin de boot).
+  (comportement QEMU-specific). **Réfuté** : le vrai coupable est le
+  débordement du BSS dans `elf.rs` (voir entrée ci-dessus) — les E/S 8042
+  n'étaient qu'un déclencheur de calendrier.
 - État J7 : framebuffer GOP/VBE (J7.1), contrôleur PS/2 détecté (self-test
   0x55, ports OK) en expérimentation, curseur logiciel (J7-B2) câblé
   conditionnellement. `make test` + `make test-uefi` verts.

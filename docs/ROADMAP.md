@@ -312,6 +312,11 @@ J1: noyau charge, mode long actif, console OK.
 **Livrables**
 1. DRM/KMS : modesetting, framebuffer, curseur matériel.
 2. evdev (clavier, souris, touchpad).
+   ~~Contrôleur PS/2 initialisé (self-test 8042, détection clavier/souris,
+   IRQ12 démasquée).~~ **Fait** (J7-B1, 2026-11-08) : `ps2::init()` complet,
+   gates J7.2/J7.3 BIOS + UEFI. Le no-op de `76172ca`..`29b79c0` masquait
+   un bug du chargeur ELF (débordement du BSS sur la table de pages),
+   pas un problème PS/2 — corrigé. Reste : evdev, curseur en mode graphique.
 3. Compositeur maison (animations côté serveur, vsync, triple buffering).
 4. Wayland (protocole) + toolkit (GTK/Qt ou maison).
 5. Mesa : `llvmpipe` d'abord, puis pilote GPU Intel/AMD.

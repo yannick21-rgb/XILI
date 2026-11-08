@@ -230,16 +230,36 @@ pub unsafe fn load_elf(data: &[u8]) -> Option<ElfInfo> {
                         }
                     }
 
-                    let bss_offset = filesz - page_idx * PAGE_SIZE;
-                    if bss_offset < PAGE_SIZE && memsz > filesz {
-                        let bss_start = (page_vaddr as usize)
-                            .saturating_add(bss_offset.max(0));
-                        let bss_len = PAGE_SIZE.saturating_sub(bss_offset.max(0));
-                        if bss_len > 0 {
+                    // BSS : la zone [seg_vaddr + filesz, seg_vaddr + memsz)
+                    // bornée à la page en cours.
+                    //
+                    // Correctif (bug J7) : l'ancien calcul
+                    //   bss_start = page_vaddr + (filesz - page_idx*PAGE)
+                    //   bss_len   = PAGE_SIZE - bss_offset
+                    // produisait un dépassement quand `page_vaddr` n'est pas
+                    // aligné (p_vaddr = 0x403010) : l'écriture allait jusqu'à
+                    // 0x404010, c'est-à-dire dans la page physique voisine —
+                    // qui, après le split de la grande page de 2 Mio, est la
+                    // TABLE DE PAGES (phys 0x404000). pt[0]/pt[1] étaient
+                    // zéroés, l'entrée du shell (0x401000) disparaissait →
+                    // #PF en R3 → #DF → triple fault.
+                    if memsz > filesz {
+                        let page_start =
+                            page_vaddr & !((PAGE_SIZE as u64) - 1);
+                        let page_end = page_start + PAGE_SIZE as u64;
+                        let zero_from = core::cmp::max(
+                            seg_vaddr as u64 + filesz as u64,
+                            page_start,
+                        );
+                        let zero_to = core::cmp::min(
+                            seg_vaddr as u64 + memsz as u64,
+                            page_end,
+                        );
+                        if zero_to > zero_from {
                             core::ptr::write_bytes(
-                                bss_start as *mut u8,
+                                zero_from as *mut u8,
                                 0,
-                                bss_len,
+                                (zero_to - zero_from) as usize,
                             );
                         }
                     }

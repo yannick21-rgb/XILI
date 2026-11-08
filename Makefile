@@ -98,6 +98,12 @@ run-esp: esp
 # J3.4 : VFS + /dev sont initialises avant le chargement de desk.elf.
 # J3.5/J4.2 : desk.elf est charge depuis l'initrd ; le bureau userland
 # ecrit son cadre de fenetre puis se termine.
+#
+# J7.2/J7.3 (contrôleur PS/2) : le self-test 8042 renvoie 0x55, le clavier
+# et la souris sont détectés, l'init va au bout. Gate posé le 2026-11-08 :
+# le no-op de 76172ca..29b79c0 masquait un bug du chargeur ELF (débordement
+# du BSS sur la table de pages), pas un problème PS/2. Ces marqueurs sont
+# imprimés IRQ masquées (ps2::marker) pour ne pas être découpés par un tick.
 test: iso
 	@(sleep 20; printf 'hello.elf\n'; sleep 2) | timeout 120 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
 	@# GRUB/QEMU avale les 2 premiers octets du flux serie au demarrage :
@@ -118,9 +124,13 @@ test: iso
 	  && grep -q "J3.5: chargement de 'shell.elf' depuis l'initrd" $(LOG) \
 	  && grep -q "J4: shell pret" $(LOG) \
 	  && grep -q "Hello from user program" $(LOG) \
+	  && grep -qF "J7.2: controller self-test = 0x55 (OK)" $(LOG) \
+	  && grep -q "J7.2: PS/2 clavier detecte" $(LOG) \
+	  && grep -q "J7.3: PS/2 souris detectee" $(LOG) \
+	  && grep -q "J7.2: PS/2 init end" $(LOG) \
 	  && grep "TH" $(LOG) >/dev/null \
 	  && ! grep -qi "panic" $(LOG) \
-	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + shell/J4.1)" \
+	  && echo "TEST OK — BIOS (J1 + J2.3 + J2.3b + J2.4 + J2.5 + J2.5c + J2.6 + J2.6b + J2.7 + J2.7b + J2.8 + J3.4 + shell/J4.1 + PS/2 J7.2/J7.3)" \
 	  || (echo "TEST ECHEC"; tail -40 $(LOG); exit 1)
 
 # J6 : stockage IDE + ext2 — le disque ext2 de test doit contenir
@@ -169,9 +179,11 @@ test-uefi: iso-uefi esp
 	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
   && grep -q "J3.4: VFS + /dev pret" $(UEFI_LOG) \
+	  && grep -qF "J7.2: controller self-test = 0x55 (OK)" $(UEFI_LOG) \
+	  && grep -q "J7.3: PS/2 souris detectee" $(UEFI_LOG) \
 	  && grep "TH" $(UEFI_LOG) >/dev/null \
 	  && ! grep -q "!" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8)" \
+	  && echo "TEST OK — UEFI ISO (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8 + J7.2/J7.3 PS/2)" \
 	  || (echo "TEST UEFI ECHEC (ISO)"; tail -40 $(UEFI_LOG); exit 1)
 	@cp $(OVMF_VARS) ovmf-vars.fd
 	@timeout 60 $(QEMU_UEFI) -drive format=raw,file=$(ESP_IMG) -m 512M -nographic -no-reboot > $(UEFI_LOG) 2>&1 || true
@@ -183,9 +195,11 @@ test-uefi: iso-uefi esp
 	  && grep -q "J2.7b: planificateur + GPR" $(UEFI_LOG) \
 	  && grep -q "J2.8: scheduler priorites + GPR" $(UEFI_LOG) \
   && grep -q "J3.4: VFS + /dev pret" $(UEFI_LOG) \
+	  && grep -qF "J7.2: controller self-test = 0x55 (OK)" $(UEFI_LOG) \
+	  && grep -q "J7.3: PS/2 souris detectee" $(UEFI_LOG) \
 	  && grep "TH" $(UEFI_LOG) >/dev/null \
 	  && ! grep -q "!" $(UEFI_LOG) \
-	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8)" \
+	  && echo "TEST OK — UEFI ESP (J1 + J2.3 + J2.3b + J2.4 + J2.5c + J2.7 + J2.7b + J2.8 + J7.2/J7.3 PS/2)" \
 	  || (echo "TEST UEFI ECHEC (ESP)"; tail -40 $(UEFI_LOG); exit 1)
 
 clean:

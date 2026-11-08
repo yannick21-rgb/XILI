@@ -18,6 +18,26 @@ impl fmt::Write for Console {
     }
 }
 
+/// Imprime sur la console (série + VGA) de façon **atomique**.
+///
+/// Le handler du timer écrit un « T » nu à chaque tick (100 Hz) et les
+/// workers écrivent « H. »/« L »/« M » : ces caractères s'intercalaient en
+/// milieu de ligne sur la voie série et découpaient les marqueurs du boot
+/// (« J3T.HTLTMT.HT.5: chargement… »), ce qui faisait échouer les gates du
+/// Makefile au hasard. On masque les IRQ pendant l'impression pour obtenir
+/// une ligne entière, puis on restaure RFLAGS tel quel (l'appelant reste
+/// maître de son état d'interruption).
 pub fn print(args: fmt::Arguments) {
-    let _ = Console.write_fmt(args);
+    let rflags: u64;
+    unsafe {
+        core::arch::asm!("pushfq", "pop {}", out(reg) rflags, options(nomem));
+        core::arch::asm!("cli", options(nostack, nomem));
+        let _ = Console.write_fmt(args);
+        core::arch::asm!(
+            "push {0}",
+            "popfq",
+            in(reg) rflags,
+            options(nostack, nomem)
+        );
+    }
 }

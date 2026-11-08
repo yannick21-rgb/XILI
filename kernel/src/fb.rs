@@ -13,8 +13,10 @@ static mut FB_HEIGHT: u32 = 0;
 static mut FB_PITCH: u32 = 0;
 static mut FB_BPP: u8 = 0;
 
-// Curseur logiciel (J7-B2). Implémenté mais non câblé car ps2::init() est no-op.
-// cursor_init() est appelé uniquement si fb::is_ready() (mode UEFI graphique).
+// Curseur logiciel (J7-B2). Chaîne câblée : IRQ12 → irq::handle_mouse →
+// ps2::mouse_byte → fb::cursor_move. Le tracé n'est actif qu'en mode
+// graphique (fb::is_ready(), mode UEFI GOP) ; en BIOS texte, le chemin est
+// ignoré. cursor_init() n'est appelé que si fb::is_ready().
 
 pub unsafe fn init(mbi: u32) -> bool {
     let info = match mbi::FramebufferInfo::read(mbi) {

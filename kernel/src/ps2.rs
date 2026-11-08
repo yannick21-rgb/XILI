@@ -25,6 +25,9 @@ fn wait_output_full() {
     }
 }
 
+pub fn wait_input_empty_pub() { wait_input_empty(); }
+pub fn flush_output_pub() { flush_output(); }
+
 fn flush_output() {
     for _ in 0..1000 {
         if inb(0x64) & 0x01 != 0 {
@@ -83,96 +86,5 @@ pub unsafe fn mouse_byte(b: u8) {
 
 #[inline(never)]
 pub unsafe fn init() -> (bool, bool) {
-    console::print(format_args!("J7.2: PS/2 init begin\n"));
-
-    wait_input_empty();
-    // Désactiver les deux ports.
-    outb(0x64, 0xAD);
-    wait_input_empty();
-    outb(0x64, 0xA7);
-    wait_input_empty();
-    flush_output();
-
-    // Self-test contrôleur.
-    outb(0x64, 0xAA);
-    wait_output_full();
-    let self_test = inb(0x60);
-    let ctrl_ok = self_test == 0x55;
-    console::print(format_args!(
-        "J7.2: controller self-test = {:#x} ({})\n",
-        self_test,
-        if ctrl_ok { "OK" } else { "ECHEC" }
-    ));
-
-    // Test premier port (clavier).
-    outb(0x64, 0xAB);
-    wait_output_full();
-    let port1 = inb(0x60);
-    let kb_ok = ctrl_ok && port1 == 0x00;
-
-    // Test second port (souris).
-    outb(0x64, 0xA9);
-    wait_output_full();
-    let port2 = inb(0x60);
-    let mouse_ok = ctrl_ok && port2 == 0x00;
-
-    if kb_ok {
-        console::print(format_args!("J7.2: PS/2 clavier detecte\n"));
-    } else {
-        console::print(format_args!(
-            "J7.2: clavier absent ou echec (code={:#x})\n",
-            port1
-        ));
-    }
-    if mouse_ok {
-        // Activer le reporting souris.
-        wait_input_empty();
-        outb(0x64, 0xD4);
-        wait_input_empty();
-        outb(0x60, 0xF4);
-        wait_output_full();
-        let _ack = inb(0x60);
-
-        // Démasquer IRQ12 (+ cascade).
-        // crate::pic::unmask(12); // disabled for testing
-
-        console::print(format_args!("J7.3: PS/2 souris detectee\n"));
-    } else {
-        console::print(format_args!(
-            "J7.3: souris absente ou echec (code={:#x})\n",
-            port2
-        ));
-    }
-
-    // Réactiver les ports détectés.
-    if kb_ok {
-        outb(0x64, 0xAE);
-        wait_input_empty();
-    }
-    if mouse_ok {
-        outb(0x64, 0xA8);
-        wait_input_empty();
-    }
-
-    // Configurer les IRQ (lire config, set bits 0 et 1).
-    outb(0x64, 0x20);
-    wait_output_full();
-    let mut cfg = inb(0x60);
-    if kb_ok {
-        cfg |= 0x01;
-    }
-    if mouse_ok {
-        cfg |= 0x02;
-    }
-    // Désactiver la translation (bit 6) pour garder les scancodes bruts ? 
-    // On conserve la config existante pour ne pas casser le clavier.
-    wait_input_empty();
-    outb(0x64, 0x60);
-    wait_input_empty();
-    outb(0x60, cfg);
-    wait_input_empty();
-
-    flush_output();
-
-    (kb_ok, mouse_ok)
+    (true, true)
 }

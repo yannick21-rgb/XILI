@@ -13,7 +13,8 @@ static mut FB_HEIGHT: u32 = 0;
 static mut FB_PITCH: u32 = 0;
 static mut FB_BPP: u8 = 0;
 
-// (cursor removed)
+// Curseur logiciel (J7-B2). Implémenté mais non câblé car ps2::init() est no-op.
+// cursor_init() est appelé uniquement si fb::is_ready() (mode UEFI graphique).
 
 pub unsafe fn init(mbi: u32) -> bool {
     let info = match mbi::FramebufferInfo::read(mbi) {

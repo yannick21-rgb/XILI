@@ -1,4 +1,9 @@
 //! J7 — Contrôleur PS/2 (8042) : détection clavier/souris.
+//!
+//! NOTE: `init()` est actuellement un no-op car l'appel complet casse le
+//! boot de shell.elf (cause inconnue). Le code d'init est conservé mais
+//! désactivé. Les fonctions `mouse_byte()` etc. sont disponibles pour
+//! un futur câblage.
 
 use crate::console;
 use crate::io::{inb, outb};
@@ -24,9 +29,6 @@ fn wait_output_full() {
         }
     }
 }
-
-pub fn wait_input_empty_pub() { wait_input_empty(); }
-pub fn flush_output_pub() { flush_output(); }
 
 fn flush_output() {
     for _ in 0..1000 {
@@ -84,7 +86,8 @@ pub unsafe fn mouse_byte(b: u8) {
     }
 }
 
-#[inline(never)]
 pub unsafe fn init() -> (bool, bool) {
+    // NO-OP: l'appel complet casse le boot de shell.elf (cause inconnue).
+    // Le code ci-dessous est conservé pour référence mais désactivé.
     (true, true)
 }

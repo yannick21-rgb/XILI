@@ -162,8 +162,11 @@ pub unsafe fn lookup(name: &[u8]) -> Option<Inode> {
         b"ptmx" | b"console" => {
             return Some(Inode { file_type: FileType::CharDev, minor: 4, data: core::ptr::null(), size: 0 });
         }
-        b"pts" | b"pts/0" => {
-            return Some(Inode { file_type: FileType::CharDev, minor: 4, data: core::ptr::null(), size: 0 });
+        b"pts/0" => {
+            return Some(Inode { file_type: FileType::CharDev, minor: 10, data: core::ptr::null(), size: 0 });
+        }
+        b"pts" => {
+            return Some(Inode { file_type: FileType::Directory, minor: 2, data: core::ptr::null(), size: 0 });
         }
         _ => {}
     }
@@ -891,6 +894,43 @@ fn dev_tty_write(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc
     count
 }
 
+// --- PTY (J4) : tampon partagé pour /dev/pts/0 et /dev/ptmx ---
+const PTY_BUF_SIZE: usize = 4096;
+static mut PTY_BUF: [u8; PTY_BUF_SIZE] = [0; PTY_BUF_SIZE];
+static mut PTY_HEAD: usize = 0; // position d'écriture
+static mut PTY_TAIL: usize = 0; // position de lecture
+static mut PTY_COUNT: usize = 0; // octets disponibles
+
+fn dev_pty_read(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let mut bytes: usize = 0;
+    while bytes < count {
+        unsafe {
+            if PTY_COUNT == 0 { break; }
+            let b = PTY_BUF[PTY_TAIL];
+            core::ptr::write_volatile((buf as *mut u8).add(bytes), b);
+            PTY_TAIL = (PTY_TAIL + 1) % PTY_BUF_SIZE;
+            PTY_COUNT -= 1;
+        }
+        bytes += 1;
+    }
+    bytes
+}
+
+fn dev_pty_write(buf: *const u8, count: usize, _pos: usize, _fd: *const FileDesc) -> usize {
+    let mut bytes: usize = 0;
+    while bytes < count {
+        unsafe {
+            if PTY_COUNT >= PTY_BUF_SIZE { break; }
+            let b = core::ptr::read_volatile((buf as *const u8).add(bytes));
+            PTY_BUF[PTY_HEAD] = b;
+            PTY_HEAD = (PTY_HEAD + 1) % PTY_BUF_SIZE;
+            PTY_COUNT += 1;
+        }
+        bytes += 1;
+    }
+    bytes
+}
+
 fn char_dev_read(
     inode: &Inode,
     buf: *const u8,
@@ -904,6 +944,7 @@ fn char_dev_read(
         5 => dev_zero_read(buf, count, pos, _fd),
         8 => dev_random_read(buf, count, pos, _fd),
         9 => dev_random_read(buf, count, pos, _fd),
+        10 => dev_pty_read(buf, count, pos, _fd),
         _ => 0,
     }
 }
@@ -920,6 +961,7 @@ fn char_dev_write(
         4 => dev_tty_write(buf, count, pos, _fd),
         5 => dev_zero_write(buf, count, pos, _fd),
         8 => dev_random_write(buf, count, pos, _fd),
+        10 => dev_pty_write(buf, count, pos, _fd),
         _ => 0,
     }
 }

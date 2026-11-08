@@ -5,6 +5,17 @@ décisions prises.
 
 ---
 
+## 2026-11-08 — J7 : PS/2 réactivée — vraie cause = débordement BSS ELF
+
+- **Cause racine** (pas le PS/2) : `elf.rs` zéroait le BSS avec `bss_start = page_vaddr + (filesz - page_idx*PAGE)` et `bss_len = PAGE - bss_offset`. Quand `p_vaddr` n'est pas aligné (0x403010), l'écriture allait jusqu'à 0x404010, soit la page physique voisine — qui, après le split de la grande page de 2 Mio, est la **table de pages** (phys 0x404000). `pt[0]`/`pt[1]` zéroés → entrée du shell (0x401000) non présente → #PF en R3 → #DF → triple fault. Les E/S du 8042 n'étaient qu'un déclencheur de calendrier.
+- **Correctif** : bornes page-alignées (`page_start`..`page_end` ∩ [seg_vaddr+filesz, seg_vaddr+memsz)).
+- **console.rs** : `print()` masque les IRQ pendant l'impression (atomique) pour éviter que le timer ne découpe les marqueurs.
+- **ps2.rs** : `init()` complète réactivée (self-test 0x55, clavier + souris détectés). `marker()` helper pour sortie atomique.
+- **Makefile** : gates J7.2/J7.3 (self-test, clavier, souris, init end) en BIOS et UEFI.
+- `make test` BIOS + UEFI verts. PS/2 clavier/souris détectés au boot.
+
+---
+
 ## 2026-11-08 — J7 : PS/2 — cause racine identifiée (I/O séquentielle)
 
 - `ps2::init()` reste un no-op dans le code committé (`make test` vert).

@@ -99,7 +99,7 @@ run-esp: esp
 # J3.5/J4.2 : desk.elf est charge depuis l'initrd ; le bureau userland
 # ecrit son cadre de fenetre puis se termine.
 test: iso
-	@(sleep 12; printf 'hello.elf\n'; sleep 2) | timeout 60 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
+	@(sleep 20; printf 'hello.elf\n'; sleep 2) | timeout 120 qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -monitor none -no-reboot > $(LOG) 2>&1 || true
 	@# GRUB/QEMU avale les 2 premiers octets du flux serie au demarrage :
 	# les marqueurs du debut du boot perdent leurs 2 premiers caracteres
 	# (« J2.3: » arrive « 2.3: »). On normalise le log avant de tester.

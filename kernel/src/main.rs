@@ -445,7 +445,7 @@ pub extern "C" fn kernel_main(magic: u32, mbi: u32) -> ! {
         console::print(format_args!("J6.1: IDE absent\n"));
     }
 
-    // J7-B : contrôleur PS/2 — désactivé (casse le boot shell même le self-test).
+    // J7-B : contrôleur PS/2 (désactivé — casse le boot shell).
     let _ = ();
 
     // J7 : framebuffer VBE (via GRUB, mode gfxpayload=keep).

@@ -81,6 +81,7 @@ pub unsafe fn mouse_byte(b: u8) {
     }
 }
 
+#[inline(never)]
 pub unsafe fn init() -> (bool, bool) {
     console::print(format_args!("J7.2: PS/2 init begin\n"));
 
